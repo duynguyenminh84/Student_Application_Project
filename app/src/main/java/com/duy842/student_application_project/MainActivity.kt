@@ -4,17 +4,29 @@ import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
+import androidx.compose.ui.text.font.FontStyle
+import androidx.compose.ui.graphics.Color
+import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Delete
+import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.Home
+import androidx.compose.material.icons.filled.Info
+import androidx.compose.material.icons.filled.Star
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
+import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import com.duy842.student_application_project.ui.theme.Student_Application_ProjectTheme
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
@@ -22,9 +34,8 @@ import kotlinx.coroutines.launch
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        enableEdgeToEdge()
         setContent {
-            Student_Application_ProjectTheme {
+            Student_Application_ProjectTheme(dynamicColor = false) {
                 var currentScreen by remember { mutableStateOf(Screen.Home) }
 
                 Scaffold(
@@ -61,6 +72,7 @@ enum class Screen {
     Home, TaskManager
 }
 
+
 data class Task(
     val name: String,
     val category: String,
@@ -77,81 +89,263 @@ fun HomeScreen() {
     var selectedCategory by remember { mutableStateOf("All") }
     var selectedPriority by remember { mutableStateOf("All") }
 
+    // 🔧 Edit Dialog State
+    var editingTaskIndex by remember { mutableStateOf(-1) }
+    var editedPriority by remember { mutableStateOf("Medium") }
+    var editedCategory by remember { mutableStateOf("Assignment") }
+    var showEditDialog by remember { mutableStateOf(false) }
+
+    val motivationalQuotes = listOf(
+        "Dream big. Start small. But most of all, start. – Simon Sinek",
+        "The way to get started is to quit talking and begin doing. – Walt Disney",
+        "Chase the vision, not the money. The money will end up following you. – Tony Hsieh",
+        "Done is better than perfect. – Sheryl Sandberg",
+        "If you are not embarrassed by the first version of your product, you’ve launched too late. – Reid Hoffman",
+        "The most effective way to do it is to do it. – Amelia Earhart",
+        "Your time is limited, so don’t waste it living someone else’s life. – Steve Jobs",
+        "Vision without execution is hallucination. – Thomas Edison",
+        "When everything seems to be going against you, remember that the airplane takes off against the wind. – Henry Ford"
+    )
+
+
     LaunchedEffect(Unit) {
         TaskPrefs.getTasks(context).collect { loaded ->
             tasks = loaded
         }
     }
 
-    val filtered = tasks.filter {
+    val filteredTasks = tasks.filter {
         (selectedCategory == "All" || it.category == selectedCategory) &&
                 (selectedPriority == "All" || it.priority == selectedPriority)
     }
 
-    Column(modifier = Modifier.padding(24.dp)) {
-        Text("💡 Keep pushing forward!", style = MaterialTheme.typography.headlineSmall)
-
-        Spacer(modifier = Modifier.height(16.dp))
-
-        Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-            FilterDropdown("Category", listOf("All", "Assignment", "Exam", "Personal"), selectedCategory) {
-                selectedCategory = it
-            }
-            FilterDropdown("Priority", listOf("All", "High", "Medium", "Low"), selectedPriority) {
-                selectedPriority = it
-            }
-        }
-
-        Spacer(modifier = Modifier.height(24.dp))
-        Text("Today's Tasks", style = MaterialTheme.typography.titleMedium)
-
-        Spacer(modifier = Modifier.height(12.dp))
-
-        filtered.forEachIndexed { index, task ->
-            TaskItem(task,
-                onToggle = {
-                    tasks = tasks.mapIndexed { i, t ->
-                        if (i == index) t.copy(isDone = !t.isDone) else t
-                    }
-                },
-                onRemove = {
-                    tasks = tasks.filterIndexed { i, _ -> i != index }
-                }
-            )
-        }
-
-        Spacer(modifier = Modifier.height(24.dp))
-
-        Button(onClick = {
-            scope.launch {
-                TaskPrefs.saveTasks(context, tasks)
-            }
-        }, modifier = Modifier.fillMaxWidth()) {
-            Text("Save Tasks")
-        }
-    }
-}
-
-@Composable
-fun TaskItem(task: Task, onToggle: () -> Unit, onRemove: () -> Unit) {
-    Row(
-        modifier = Modifier.fillMaxWidth().padding(vertical = 6.dp),
-        horizontalArrangement = Arrangement.SpaceBetween,
-        verticalAlignment = Alignment.CenterVertically
+    Column(
+        modifier = Modifier
+            .fillMaxSize()
+            .padding(horizontal = 24.dp, vertical = 16.dp),
+        verticalArrangement = Arrangement.spacedBy(24.dp)
     ) {
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            Checkbox(checked = task.isDone, onCheckedChange = { onToggle() })
-            Spacer(modifier = Modifier.width(8.dp))
-            Column {
-                Text(task.name)
-                Text("📂 ${task.category}   🔥 ${task.priority}", style = MaterialTheme.typography.labelSmall)
+        // 🔹 App Title
+        Text(
+            text = "📋 Task Reminder",
+            style = MaterialTheme.typography.headlineSmall.copy(
+                fontWeight = FontWeight.Bold,
+                letterSpacing = 1.2.sp
+            ),
+            color = MaterialTheme.colorScheme.primary
+        )
+
+        // 🔹 Motivational Quotes
+
+        val quoteOfTheDay = remember { motivationalQuotes.random() }
+
+        Box(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(vertical = 8.dp)
+                .background(
+                    brush = Brush.horizontalGradient(
+                        colors = listOf(
+                            MaterialTheme.colorScheme.primary.copy(alpha = 0.8f),
+                            MaterialTheme.colorScheme.tertiary.copy(alpha = 0.8f)
+                        )
+                    ),
+                    shape = RoundedCornerShape(12.dp)
+                )
+                .padding(20.dp)
+        ) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Icon(
+                    imageVector = Icons.Default.Star,
+                    contentDescription = "Motivation",
+                    tint = Color.White,
+                    modifier = Modifier.size(28.dp)
+                )
+                Spacer(modifier = Modifier.width(12.dp))
+                Text(
+                    text = quoteOfTheDay,
+                    style = MaterialTheme.typography.titleMedium.copy(
+                        fontSize = 18.sp,
+                        fontWeight = FontWeight.SemiBold,
+                        fontStyle = FontStyle.Italic,
+                        lineHeight = 24.sp
+                    ),
+                    color = Color.White
+                )
             }
         }
-        IconButton(onClick = onRemove) {
-            Icon(Icons.Default.Delete, contentDescription = "Remove Task")
+
+
+
+
+        // 🔹 Filter Section
+        ElevatedCard(
+            modifier = Modifier.fillMaxWidth(),
+            shape = MaterialTheme.shapes.medium
+        ) {
+            Column(modifier = Modifier.padding(16.dp)) {
+                Text("Filter your tasks", style = MaterialTheme.typography.titleMedium)
+                Spacer(Modifier.height(8.dp))
+                Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                    FilterDropdown("Category", listOf("All", "Assignment", "Exam", "Personal"), selectedCategory) {
+                        selectedCategory = it
+                    }
+                    FilterDropdown("Priority", listOf("All", "High", "Medium", "Low"), selectedPriority) {
+                        selectedPriority = it
+                    }
+                }
+            }
+        }
+
+        // 🔹 Task List Section
+        ElevatedCard(
+            modifier = Modifier.fillMaxWidth(),
+            shape = MaterialTheme.shapes.medium
+        ) {
+            Column(modifier = Modifier.padding(16.dp)) {
+                Text("🎯 Today's Tasks", style = MaterialTheme.typography.headlineSmall.copy(fontWeight = FontWeight.SemiBold))
+                Spacer(Modifier.height(8.dp))
+
+                if (filteredTasks.isEmpty()) {
+                    Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                        Icon(Icons.Default.Info, contentDescription = null, tint = MaterialTheme.colorScheme.outline)
+                        Text("No tasks match your filters.", style = MaterialTheme.typography.bodyMedium)
+                    }
+                } else {
+                    Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                        filteredTasks.forEachIndexed { index, task ->
+                            ElevatedCard(
+                                modifier = Modifier.fillMaxWidth(),
+                                shape = MaterialTheme.shapes.medium,
+                                elevation = CardDefaults.elevatedCardElevation(defaultElevation = 4.dp)
+                            ) {
+                                Row(
+                                    modifier = Modifier
+                                        .padding(16.dp)
+                                        .fillMaxWidth(),
+                                    horizontalArrangement = Arrangement.SpaceBetween,
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    Row(verticalAlignment = Alignment.CenterVertically) {
+                                        Checkbox(
+                                            checked = task.isDone,
+                                            onCheckedChange = {
+                                                tasks = tasks.mapIndexed { i, t ->
+                                                    if (i == index) t.copy(isDone = !t.isDone) else t
+                                                }
+                                            }
+                                        )
+                                        Spacer(modifier = Modifier.width(8.dp))
+                                        Column {
+                                            Text(task.name, style = MaterialTheme.typography.bodyMedium)
+                                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                                Text("📂 ${task.category}", style = MaterialTheme.typography.labelSmall)
+                                                Spacer(modifier = Modifier.width(8.dp))
+                                                AssistChip(
+                                                    onClick = {},
+                                                    label = { Text(task.priority) },
+                                                    colors = AssistChipDefaults.assistChipColors(
+                                                        containerColor = when (task.priority) {
+                                                            "High" -> MaterialTheme.colorScheme.error.copy(alpha = 0.2f)
+                                                            "Medium" -> MaterialTheme.colorScheme.tertiary.copy(alpha = 0.2f)
+                                                            "Low" -> MaterialTheme.colorScheme.secondary.copy(alpha = 0.2f)
+                                                            else -> MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.2f)
+                                                        }
+                                                    )
+                                                )
+                                            }
+                                        }
+                                    }
+                                    Row {
+                                        IconButton(onClick = {
+                                            editingTaskIndex = index
+                                            editedPriority = task.priority
+                                            editedCategory = task.category
+                                            showEditDialog = true
+                                        }) {
+                                            Icon(Icons.Default.Edit, contentDescription = "Edit Task")
+                                        }
+                                        IconButton(onClick = {
+                                            tasks = tasks.filterIndexed { i, _ -> i != index }
+                                        }) {
+                                            Icon(Icons.Default.Delete, contentDescription = "Delete Task")
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        // 🔹 Save Button
+        Button(
+            onClick = {
+                scope.launch {
+                    TaskPrefs.saveTasks(context, tasks)
+                }
+            },
+            modifier = Modifier.fillMaxWidth()
+        ) {
+            Text("💾 Save Tasks", style = MaterialTheme.typography.titleMedium)
         }
     }
+
+    // 🔧 Edit Dialog
+    if (showEditDialog && editingTaskIndex != -1) {
+        AlertDialog(
+            onDismissRequest = { showEditDialog = false },
+            confirmButton = {
+                TextButton(onClick = {
+                    tasks = tasks.mapIndexed { i, t ->
+                        if (i == editingTaskIndex) t.copy(
+                            priority = editedPriority,
+                            category = editedCategory
+                        ) else t
+                    }
+                    showEditDialog = false
+                }) {
+                    Text("Save")
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { showEditDialog = false }) {
+                    Text("Cancel")
+                }
+            },
+            title = { Text("Edit Task") },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                    Text("Select Category", style = MaterialTheme.typography.labelMedium)
+                    listOf("Assignment", "Exam", "Personal").forEach { option ->
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            RadioButton(
+                                selected = editedCategory == option,
+                                onClick = { editedCategory = option }
+                            )
+                            Text(option)
+                        }
+                    }
+
+                    Spacer(Modifier.height(8.dp))
+
+                    Text("Select Priority", style = MaterialTheme.typography.labelMedium)
+                    listOf("High", "Medium", "Low").forEach { option ->
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            RadioButton(
+                                selected = editedPriority == option,
+                                onClick = { editedPriority = option }
+                            )
+                            Text(option)
+                        }
+                    }
+                }
+            }
+        )
+    }
 }
+
 
 @Composable
 fun TaskManagerScreen() {
@@ -162,29 +356,38 @@ fun TaskManagerScreen() {
     var selectedCategory by remember { mutableStateOf("Assignment") }
     var selectedPriority by remember { mutableStateOf("Medium") }
 
-    Column(modifier = Modifier.fillMaxSize().padding(24.dp), verticalArrangement = Arrangement.spacedBy(16.dp)) {
+    Column(
+        modifier = Modifier
+            .fillMaxSize()
+            .padding(24.dp),
+        verticalArrangement = Arrangement.spacedBy(16.dp)
+    ) {
         Text("📝 Add New Task", style = MaterialTheme.typography.titleLarge)
 
         OutlinedTextField(
             value = taskName,
             onValueChange = { taskName = it },
             label = { Text("Task Name") },
-            modifier = Modifier.fillMaxWidth()
+            modifier = Modifier.fillMaxWidth(),
+            keyboardOptions = KeyboardOptions.Default.copy(imeAction = ImeAction.Done)
         )
 
         CategorySelector(selectedCategory) { selectedCategory = it }
         PrioritySelector(selectedPriority) { selectedPriority = it }
 
-        Button(onClick = {
-            if (taskName.isNotBlank()) {
-                scope.launch {
-                    val current = TaskPrefs.getTasks(context).first()
-                    val newTask = Task(taskName, selectedCategory, selectedPriority)
-                    TaskPrefs.saveTasks(context, current + newTask)
-                    taskName = ""
+        Button(
+            onClick = {
+                if (taskName.isNotBlank()) {
+                    scope.launch {
+                        val current = TaskPrefs.getTasks(context).first()
+                        val newTask = Task(taskName, selectedCategory, selectedPriority)
+                        TaskPrefs.saveTasks(context, current + newTask)
+                        taskName = ""
+                    }
                 }
-            }
-        }, modifier = Modifier.fillMaxWidth()) {
+            },
+            modifier = Modifier.fillMaxWidth()
+        ) {
             Text("Add Task to Home")
         }
     }
@@ -219,7 +422,7 @@ fun FilterDropdown(label: String, options: List<String>, selected: String, onSel
     var expanded by remember { mutableStateOf(false) }
 
     Column {
-        Text(label, style = MaterialTheme.typography.labelSmall)
+        Text(label, style = MaterialTheme.typography.labelMedium)
         Box {
             OutlinedButton(onClick = { expanded = true }) {
                 Text(selected)
