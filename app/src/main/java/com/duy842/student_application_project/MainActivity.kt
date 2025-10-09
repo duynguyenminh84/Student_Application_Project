@@ -7,12 +7,17 @@ import androidx.activity.enableEdgeToEdge
 import androidx.compose.foundation.layout.*
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
+import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Home
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import com.duy842.student_application_project.ui.theme.Student_Application_ProjectTheme
+import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.launch
 
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -23,10 +28,20 @@ class MainActivity : ComponentActivity() {
                 var currentScreen by remember { mutableStateOf(Screen.Home) }
 
                 Scaffold(
-                    modifier = Modifier.fillMaxSize(),
                     bottomBar = {
-                        BottomNavigationBar(currentScreen) { selected ->
-                            currentScreen = selected
+                        NavigationBar {
+                            NavigationBarItem(
+                                selected = currentScreen == Screen.Home,
+                                onClick = { currentScreen = Screen.Home },
+                                icon = { Icon(Icons.Default.Home, contentDescription = "Home") },
+                                label = { Text("Home") }
+                            )
+                            NavigationBarItem(
+                                selected = currentScreen == Screen.TaskManager,
+                                onClick = { currentScreen = Screen.TaskManager },
+                                icon = { Icon(Icons.Default.Add, contentDescription = "Add Task") },
+                                label = { Text("Add Task") }
+                            )
                         }
                     }
                 ) { innerPadding ->
@@ -46,93 +61,180 @@ enum class Screen {
     Home, TaskManager
 }
 
-@Composable
-fun BottomNavigationBar(current: Screen, onSelect: (Screen) -> Unit) {
-    NavigationBar {
-        NavigationBarItem(
-            selected = current == Screen.Home,
-            onClick = { onSelect(Screen.Home) },
-            icon = { Icon(Icons.Default.Home, contentDescription = "Home") },
-            label = { Text("Home") }
-        )
-        NavigationBarItem(
-            selected = current == Screen.TaskManager,
-            onClick = { onSelect(Screen.TaskManager) },
-            icon = { Icon(Icons.Default.Add, contentDescription = "Add Task") },
-            label = { Text("Add Task") }
-        )
-    }
-}
-
+data class Task(
+    val name: String,
+    val category: String,
+    val priority: String,
+    val isDone: Boolean = false
+)
 
 @Composable
 fun HomeScreen() {
-    Column(modifier = Modifier.padding(16.dp)) {
-        Text(
-            text = "💡 Keep pushing forward!",
-            style = MaterialTheme.typography.headlineSmall
-        )
+    val context = LocalContext.current
+    val scope = rememberCoroutineScope()
+    var tasks by remember { mutableStateOf(listOf<Task>()) }
+
+    var selectedCategory by remember { mutableStateOf("All") }
+    var selectedPriority by remember { mutableStateOf("All") }
+
+    LaunchedEffect(Unit) {
+        TaskPrefs.getTasks(context).collect { loaded ->
+            tasks = loaded
+        }
+    }
+
+    val filtered = tasks.filter {
+        (selectedCategory == "All" || it.category == selectedCategory) &&
+                (selectedPriority == "All" || it.priority == selectedPriority)
+    }
+
+    Column(modifier = Modifier.padding(24.dp)) {
+        Text("💡 Keep pushing forward!", style = MaterialTheme.typography.headlineSmall)
+
         Spacer(modifier = Modifier.height(16.dp))
-        Text(
-            text = "Today's Tasks",
-            style = MaterialTheme.typography.titleMedium
-        )
-        Spacer(modifier = Modifier.height(8.dp))
-        TaskItem("Finish CP3406 planning doc")
-        TaskItem("Review Jetpack Compose tutorial")
-        TaskItem("Start mockup for presentation")
+
+        Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+            FilterDropdown("Category", listOf("All", "Assignment", "Exam", "Personal"), selectedCategory) {
+                selectedCategory = it
+            }
+            FilterDropdown("Priority", listOf("All", "High", "Medium", "Low"), selectedPriority) {
+                selectedPriority = it
+            }
+        }
+
+        Spacer(modifier = Modifier.height(24.dp))
+        Text("Today's Tasks", style = MaterialTheme.typography.titleMedium)
+
+        Spacer(modifier = Modifier.height(12.dp))
+
+        filtered.forEachIndexed { index, task ->
+            TaskItem(task,
+                onToggle = {
+                    tasks = tasks.mapIndexed { i, t ->
+                        if (i == index) t.copy(isDone = !t.isDone) else t
+                    }
+                },
+                onRemove = {
+                    tasks = tasks.filterIndexed { i, _ -> i != index }
+                }
+            )
+        }
+
+        Spacer(modifier = Modifier.height(24.dp))
+
+        Button(onClick = {
+            scope.launch {
+                TaskPrefs.saveTasks(context, tasks)
+            }
+        }, modifier = Modifier.fillMaxWidth()) {
+            Text("Save Tasks")
+        }
     }
 }
 
 @Composable
-fun TaskItem(task: String) {
-    Text(
-        text = "• $task",
-        style = MaterialTheme.typography.bodyMedium,
-        modifier = Modifier.padding(vertical = 4.dp)
-    )
+fun TaskItem(task: Task, onToggle: () -> Unit, onRemove: () -> Unit) {
+    Row(
+        modifier = Modifier.fillMaxWidth().padding(vertical = 6.dp),
+        horizontalArrangement = Arrangement.SpaceBetween,
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Checkbox(checked = task.isDone, onCheckedChange = { onToggle() })
+            Spacer(modifier = Modifier.width(8.dp))
+            Column {
+                Text(task.name)
+                Text("📂 ${task.category}   🔥 ${task.priority}", style = MaterialTheme.typography.labelSmall)
+            }
+        }
+        IconButton(onClick = onRemove) {
+            Icon(Icons.Default.Delete, contentDescription = "Remove Task")
+        }
+    }
 }
 
 @Composable
 fun TaskManagerScreen() {
+    val context = LocalContext.current
+    val scope = rememberCoroutineScope()
+
     var taskName by remember { mutableStateOf("") }
     var selectedCategory by remember { mutableStateOf("Assignment") }
     var selectedPriority by remember { mutableStateOf("Medium") }
 
-    Column(modifier = Modifier.padding(16.dp)) {
-        Text(text = "Add New Task", style = MaterialTheme.typography.titleLarge)
+    Column(modifier = Modifier.fillMaxSize().padding(24.dp), verticalArrangement = Arrangement.spacedBy(16.dp)) {
+        Text("📝 Add New Task", style = MaterialTheme.typography.titleLarge)
 
-        Spacer(modifier = Modifier.height(16.dp))
-        TextField(
+        OutlinedTextField(
             value = taskName,
             onValueChange = { taskName = it },
             label = { Text("Task Name") },
             modifier = Modifier.fillMaxWidth()
         )
 
-        Spacer(modifier = Modifier.height(16.dp))
-        Text(text = "Category: $selectedCategory")
-        Row {
-            listOf("Assignment", "Exam", "Personal").forEach { category ->
-                Button(onClick = { selectedCategory = category }, modifier = Modifier.padding(4.dp)) {
-                    Text(category)
+        CategorySelector(selectedCategory) { selectedCategory = it }
+        PrioritySelector(selectedPriority) { selectedPriority = it }
+
+        Button(onClick = {
+            if (taskName.isNotBlank()) {
+                scope.launch {
+                    val current = TaskPrefs.getTasks(context).first()
+                    val newTask = Task(taskName, selectedCategory, selectedPriority)
+                    TaskPrefs.saveTasks(context, current + newTask)
+                    taskName = ""
                 }
             }
+        }, modifier = Modifier.fillMaxWidth()) {
+            Text("Add Task to Home")
         }
+    }
+}
 
-        Spacer(modifier = Modifier.height(16.dp))
-        Text(text = "Priority: $selectedPriority")
-        Row {
-            listOf("High", "Medium", "Low").forEach { priority ->
-                Button(onClick = { selectedPriority = priority }, modifier = Modifier.padding(4.dp)) {
-                    Text(priority)
-                }
+@Composable
+fun CategorySelector(selected: String, onSelect: (String) -> Unit) {
+    Column {
+        Text("Category", style = MaterialTheme.typography.titleSmall)
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            listOf("Assignment", "Exam", "Personal").forEach {
+                FilterChip(selected = selected == it, onClick = { onSelect(it) }, label = { Text(it) })
             }
         }
+    }
+}
 
-        Spacer(modifier = Modifier.height(24.dp))
-        Button(onClick = { /* Save logic later */ }, modifier = Modifier.fillMaxWidth()) {
-            Text("Add Task")
+@Composable
+fun PrioritySelector(selected: String, onSelect: (String) -> Unit) {
+    Column {
+        Text("Priority", style = MaterialTheme.typography.titleSmall)
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            listOf("High", "Medium", "Low").forEach {
+                FilterChip(selected = selected == it, onClick = { onSelect(it) }, label = { Text(it) })
+            }
+        }
+    }
+}
+
+@Composable
+fun FilterDropdown(label: String, options: List<String>, selected: String, onSelect: (String) -> Unit) {
+    var expanded by remember { mutableStateOf(false) }
+
+    Column {
+        Text(label, style = MaterialTheme.typography.labelSmall)
+        Box {
+            OutlinedButton(onClick = { expanded = true }) {
+                Text(selected)
+            }
+            DropdownMenu(expanded = expanded, onDismissRequest = { expanded = false }) {
+                options.forEach {
+                    DropdownMenuItem(
+                        text = { Text(it) },
+                        onClick = {
+                            onSelect(it)
+                            expanded = false
+                        }
+                    )
+                }
+            }
         }
     }
 }
