@@ -18,7 +18,9 @@ object TaskPrefs {
                     name = parts.getOrNull(0) ?: "",
                     category = parts.getOrNull(1) ?: "General",
                     priority = parts.getOrNull(2) ?: "Medium",
-                    isDone = parts.getOrNull(3)?.toBoolean() ?: false
+                    isDone = parts.getOrNull(3)?.toBoolean() ?: false,
+                    scheduledDay = parts.getOrNull(4),
+                    scheduledHour = parts.getOrNull(5)?.toIntOrNull()
                 )
             } ?: emptyList()
         }
@@ -26,7 +28,7 @@ object TaskPrefs {
 
     suspend fun saveTasks(context: Context, tasks: List<Task>) {
         val taskStrings = tasks.map {
-            "${it.name}|${it.category}|${it.priority}|${it.isDone}"
+            "${it.name}|${it.category}|${it.priority}|${it.isDone}|${it.scheduledDay ?: ""}|${it.scheduledHour ?: ""}"
         }.toSet()
         context.taskDataStore.edit { prefs ->
             prefs[TASKS_KEY] = taskStrings

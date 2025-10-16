@@ -2,19 +2,22 @@ package com.duy842.student_application_project
 
 import android.R.attr.password
 import android.os.Bundle
+import android.widget.Toast
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
-import com.google.firebase.auth.FirebaseAuth
 import androidx.compose.ui.text.font.FontStyle
 import androidx.compose.ui.graphics.Color
 import androidx.compose.foundation.background
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
+import androidx.compose.material.icons.filled.DateRange
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.Home
@@ -74,7 +77,16 @@ class MainActivity : ComponentActivity() {
                                         )
                                     },
                                     label = { Text("Add Task") }
+
                                 )
+                                NavigationBarItem(
+                                    selected = currentScreen == Screen.WeeklyPlanner,
+                                    onClick = { currentScreen = Screen.WeeklyPlanner },
+                                     icon = { Icon(Icons.Default.DateRange, contentDescription = "Planner") }
+                                    ,
+                                    label = { Text("Planner") }
+                                )
+
                             }
                         }
                     ) { innerPadding ->
@@ -82,6 +94,7 @@ class MainActivity : ComponentActivity() {
                             when (currentScreen) {
                                 Screen.Home -> HomeScreen()
                                 Screen.TaskManager -> TaskManagerScreen()
+                                Screen.WeeklyPlanner -> WeeklyPlannerScreen()
                             }
                         }
                     }
@@ -98,17 +111,28 @@ class MainActivity : ComponentActivity() {
 
 
 enum class Screen {
-    Home, TaskManager
+    Home, TaskManager,WeeklyPlanner
 }
 
 
 data class Task(
     val name: String,
-    val category: String,
-    val priority: String,
-    val isDone: Boolean = false
+    val category: String = "General",
+    val priority: String = "Medium",
+    val isDone: Boolean = false,
+    val scheduledDay: String? = null,  // e.g. "Mon"
+    val scheduledHour: Int? = null     // e.g. 10
 )
 
+data class TimeBlock(
+    val hour: Int,
+    var task: String = ""
+)
+
+data class DaySchedule(
+    val day: String,
+    val blocks: List<TimeBlock>
+)
 
 ////////////////////////////////////////////////////////////
 
@@ -556,6 +580,113 @@ fun FilterDropdown(label: String, options: List<String>, selected: String, onSel
                             expanded = false
                         }
                     )
+                }
+            }
+        }
+    }
+}
+
+
+
+/////////////////////////////////////////////////////
+
+
+
+@Composable
+fun WeeklyPlannerScreen() {
+    val context = LocalContext.current
+    val scope = rememberCoroutineScope()
+    val daysOfWeek = listOf("Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun")
+    val hours = (8..18).toList()
+
+    val savedTasks by TaskPrefs.getTasks(context).collectAsState(initial = emptyList())
+
+    // Keep local editable state separate from saved data
+    var editableTasks by remember { mutableStateOf(savedTasks.toMutableList()) }
+
+    // Sync local state with stored data when it changes
+    LaunchedEffect(savedTasks) {
+        editableTasks = savedTasks.toMutableList()
+    }
+
+    val horizontalScroll = rememberScrollState()
+
+    Column(
+        modifier = Modifier
+            .fillMaxSize()
+            .padding(8.dp)
+    ) {
+        // --- Save button ---
+        Button(
+            onClick = {
+                scope.launch {
+                    TaskPrefs.saveTasks(context, editableTasks)
+                    Toast
+                        .makeText(context, "Tasks saved!", Toast.LENGTH_SHORT)
+                        .show()
+                }
+            },
+            modifier = Modifier.align(Alignment.End)
+        ) {
+            Text("Save")
+        }
+
+        // --- Planner grid ---
+        Row(
+            modifier = Modifier
+                .fillMaxSize()
+                .horizontalScroll(horizontalScroll)
+                .padding(top = 8.dp)
+        ) {
+            daysOfWeek.forEach { day ->
+                val verticalScroll = rememberScrollState()
+                Column(
+                    modifier = Modifier
+                        .width(160.dp)
+                        .padding(8.dp)
+                        .verticalScroll(verticalScroll)
+                        .background(Color(0xFFF9F9F9), shape = MaterialTheme.shapes.medium)
+                ) {
+                    Text(
+                        text = day,
+                        style = MaterialTheme.typography.titleMedium,
+                        modifier = Modifier
+                            .align(Alignment.CenterHorizontally)
+                            .padding(vertical = 12.dp),
+                        color = MaterialTheme.colorScheme.primary
+                    )
+
+                    hours.forEach { hour ->
+                        val existingTask =
+                            editableTasks.find { it.scheduledDay == day && it.scheduledHour == hour }
+                        var taskText by remember { mutableStateOf(existingTask?.name ?: "") }
+
+                        OutlinedTextField(
+                            value = taskText,
+                            onValueChange = { newValue ->
+                                taskText = newValue
+
+                                // Update local editable list only (not saving yet)
+                                editableTasks = editableTasks
+                                    .filterNot { it.scheduledDay == day && it.scheduledHour == hour }
+                                    .toMutableList()
+                                if (newValue.isNotBlank()) {
+                                    editableTasks.add(
+                                        Task(
+                                            name = newValue,
+                                            scheduledDay = day,
+                                            scheduledHour = hour
+                                        )
+                                    )
+                                }
+                            },
+                            label = { Text("$hour:00") },
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(bottom = 4.dp),
+                            singleLine = true
+                        )
+                    }
                 }
             }
         }
