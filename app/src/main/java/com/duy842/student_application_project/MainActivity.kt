@@ -1,9 +1,12 @@
 package com.duy842.student_application_project
 
+import android.R.attr.password
 import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
-import androidx.activity.enableEdgeToEdge
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
+import com.google.firebase.auth.FirebaseAuth
 import androidx.compose.ui.text.font.FontStyle
 import androidx.compose.ui.graphics.Color
 import androidx.compose.foundation.background
@@ -25,48 +28,74 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.duy842.student_application_project.ui.theme.Student_Application_ProjectTheme
+import com.google.firebase.FirebaseApp
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
+
         super.onCreate(savedInstanceState)
+
         setContent {
             Student_Application_ProjectTheme(dynamicColor = false) {
-                var currentScreen by remember { mutableStateOf(Screen.Home) }
+                var isLoggedIn by remember { mutableStateOf(false) }
 
-                Scaffold(
-                    bottomBar = {
-                        NavigationBar {
-                            NavigationBarItem(
-                                selected = currentScreen == Screen.Home,
-                                onClick = { currentScreen = Screen.Home },
-                                icon = { Icon(Icons.Default.Home, contentDescription = "Home") },
-                                label = { Text("Home") }
-                            )
-                            NavigationBarItem(
-                                selected = currentScreen == Screen.TaskManager,
-                                onClick = { currentScreen = Screen.TaskManager },
-                                icon = { Icon(Icons.Default.Add, contentDescription = "Add Task") },
-                                label = { Text("Add Task") }
-                            )
+                if (!isLoggedIn) {
+                    LoginScreen(onLoginSuccess = { isLoggedIn = true })
+                } else {
+                    var currentScreen by remember { mutableStateOf(Screen.Home) }
+
+                    Scaffold(
+                        bottomBar = {
+                            NavigationBar {
+                                NavigationBarItem(
+                                    selected = currentScreen == Screen.Home,
+                                    onClick = { currentScreen = Screen.Home },
+                                    icon = {
+                                        Icon(
+                                            Icons.Default.Home,
+                                            contentDescription = "Home"
+                                        )
+                                    },
+                                    label = { Text("Home") }
+                                )
+                                NavigationBarItem(
+                                    selected = currentScreen == Screen.TaskManager,
+                                    onClick = { currentScreen = Screen.TaskManager },
+                                    icon = {
+                                        Icon(
+                                            Icons.Default.Add,
+                                            contentDescription = "Add Task"
+                                        )
+                                    },
+                                    label = { Text("Add Task") }
+                                )
+                            }
                         }
-                    }
-                ) { innerPadding ->
-                    Box(modifier = Modifier.padding(innerPadding)) {
-                        when (currentScreen) {
-                            Screen.Home -> HomeScreen()
-                            Screen.TaskManager -> TaskManagerScreen()
+                    ) { innerPadding ->
+                        Box(modifier = Modifier.padding(innerPadding)) {
+                            when (currentScreen) {
+                                Screen.Home -> HomeScreen()
+                                Screen.TaskManager -> TaskManagerScreen()
+                            }
                         }
                     }
                 }
             }
         }
+
+
     }
 }
+
+
+
+
 
 enum class Screen {
     Home, TaskManager
@@ -79,6 +108,70 @@ data class Task(
     val priority: String,
     val isDone: Boolean = false
 )
+
+
+////////////////////////////////////////////////////////////
+
+@Composable
+fun LoginScreen(
+    onLoginSuccess: () -> Unit
+) {
+    var email by remember { mutableStateOf("") }
+    var password by remember { mutableStateOf("") }
+
+    Column(
+        modifier = Modifier
+            .fillMaxSize()
+            .padding(24.dp),
+        verticalArrangement = Arrangement.Center,
+        horizontalAlignment = Alignment.CenterHorizontally
+    ) {
+        Text("🔐 Login", style = MaterialTheme.typography.headlineMedium)
+
+        Spacer(modifier = Modifier.height(16.dp))
+
+        OutlinedTextField(
+            value = email,
+            onValueChange = { email = it },
+            label = { Text("Email") },
+            singleLine = true,
+            modifier = Modifier.fillMaxWidth()
+        )
+
+        Spacer(modifier = Modifier.height(8.dp))
+
+        OutlinedTextField(
+            value = password,
+            onValueChange = { password = it },
+            label = { Text("Password") },
+            singleLine = true,
+            visualTransformation = PasswordVisualTransformation(),
+            modifier = Modifier.fillMaxWidth()
+        )
+
+        Spacer(modifier = Modifier.height(16.dp))
+
+        Button(
+            onClick = {
+                onLoginSuccess() // ✅ No validation — logs in with any input
+            },
+            modifier = Modifier.fillMaxWidth()
+        ) {
+            Text("Login")
+        }
+    }
+}
+
+
+
+
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+
+
+
+
+
 
 @Composable
 fun HomeScreen() {
@@ -119,12 +212,20 @@ fun HomeScreen() {
                 (selectedPriority == "All" || it.priority == selectedPriority)
     }
 
+    val scrollState = rememberScrollState()
+    Box(
+        modifier = Modifier
+            .fillMaxSize()
+            .background(MaterialTheme.colorScheme.background)
+    )
     Column(
         modifier = Modifier
             .fillMaxSize()
+            .verticalScroll(scrollState)
             .padding(horizontal = 24.dp, vertical = 16.dp),
         verticalArrangement = Arrangement.spacedBy(24.dp)
-    ) {
+    )
+    {
         // 🔹 App Title
         Text(
             text = "📋 Task Reminder",
@@ -141,6 +242,8 @@ fun HomeScreen() {
 
         Box(
             modifier = Modifier
+                .fillMaxSize()
+                .background(MaterialTheme.colorScheme.background)
                 .fillMaxWidth()
                 .padding(vertical = 8.dp)
                 .background(
@@ -347,6 +450,19 @@ fun HomeScreen() {
 }
 
 
+
+
+
+
+/////////////////////////////////////////////////////////////////////////////////////////
+
+
+
+
+
+
+
+
 @Composable
 fun TaskManagerScreen() {
     val context = LocalContext.current
@@ -356,12 +472,16 @@ fun TaskManagerScreen() {
     var selectedCategory by remember { mutableStateOf("Assignment") }
     var selectedPriority by remember { mutableStateOf("Medium") }
 
+    val scrollState = rememberScrollState()
+
     Column(
         modifier = Modifier
             .fillMaxSize()
+            .verticalScroll(scrollState)
             .padding(24.dp),
         verticalArrangement = Arrangement.spacedBy(16.dp)
-    ) {
+    )
+    {
         Text("📝 Add New Task", style = MaterialTheme.typography.titleLarge)
 
         OutlinedTextField(
