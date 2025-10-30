@@ -39,7 +39,7 @@ import androidx.compose.ui.unit.sp
 import com.duy842.student_application_project.ui.theme.Student_Application_ProjectTheme
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
-
+///Set Up
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
 
