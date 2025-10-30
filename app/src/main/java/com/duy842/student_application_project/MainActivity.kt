@@ -33,9 +33,10 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
+import java.util.Calendar
+import android.app.DatePickerDialog
 import androidx.compose.ui.unit.sp
 import com.duy842.student_application_project.ui.theme.Student_Application_ProjectTheme
-import com.google.firebase.FirebaseApp
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 
@@ -86,6 +87,13 @@ class MainActivity : ComponentActivity() {
                                     ,
                                     label = { Text("Planner") }
                                 )
+                                NavigationBarItem(
+                                    selected = currentScreen == Screen.Dashboard,
+                                    onClick = { currentScreen = Screen.Dashboard },
+                                    icon = { Icon(Icons.Default.Info, contentDescription = "Dashboard") },
+                                    label = { Text("Dashboard") }
+                                )
+
 
                             }
                         }
@@ -95,6 +103,8 @@ class MainActivity : ComponentActivity() {
                                 Screen.Home -> HomeScreen()
                                 Screen.TaskManager -> TaskManagerScreen()
                                 Screen.WeeklyPlanner -> WeeklyPlannerScreen()
+                                Screen.Dashboard -> DashboardScreen()
+
                             }
                         }
                     }
@@ -111,7 +121,7 @@ class MainActivity : ComponentActivity() {
 
 
 enum class Screen {
-    Home, TaskManager,WeeklyPlanner
+    Home, TaskManager, WeeklyPlanner, Dashboard
 }
 
 
@@ -190,13 +200,6 @@ fun LoginScreen(
 
 
 //////////////////////////////////////////////////////////////////////////////////////////////////////////////////
-
-
-
-
-
-
-
 @Composable
 fun HomeScreen() {
     val context = LocalContext.current
@@ -218,12 +221,10 @@ fun HomeScreen() {
         "Chase the vision, not the money. The money will end up following you. – Tony Hsieh",
         "Done is better than perfect. – Sheryl Sandberg",
         "If you are not embarrassed by the first version of your product, you’ve launched too late. – Reid Hoffman",
-        "The most effective way to do it is to do it. – Amelia Earhart",
         "Your time is limited, so don’t waste it living someone else’s life. – Steve Jobs",
         "Vision without execution is hallucination. – Thomas Edison",
         "When everything seems to be going against you, remember that the airplane takes off against the wind. – Henry Ford"
     )
-
 
     LaunchedEffect(Unit) {
         TaskPrefs.getTasks(context).collect { loaded ->
@@ -231,25 +232,15 @@ fun HomeScreen() {
         }
     }
 
-    val filteredTasks = tasks.filter {
-        (selectedCategory == "All" || it.category == selectedCategory) &&
-                (selectedPriority == "All" || it.priority == selectedPriority)
-    }
-
     val scrollState = rememberScrollState()
-    Box(
-        modifier = Modifier
-            .fillMaxSize()
-            .background(MaterialTheme.colorScheme.background)
-    )
+
     Column(
         modifier = Modifier
             .fillMaxSize()
             .verticalScroll(scrollState)
             .padding(horizontal = 24.dp, vertical = 16.dp),
         verticalArrangement = Arrangement.spacedBy(24.dp)
-    )
-    {
+    ) {
         // 🔹 App Title
         Text(
             text = "📋 Task Reminder",
@@ -260,14 +251,10 @@ fun HomeScreen() {
             color = MaterialTheme.colorScheme.primary
         )
 
-        // 🔹 Motivational Quotes
-
+        // 🔹 Motivational Quote
         val quoteOfTheDay = remember { motivationalQuotes.random() }
-
         Box(
             modifier = Modifier
-                .fillMaxSize()
-                .background(MaterialTheme.colorScheme.background)
                 .fillMaxWidth()
                 .padding(vertical = 8.dp)
                 .background(
@@ -302,9 +289,6 @@ fun HomeScreen() {
             }
         }
 
-
-
-
         // 🔹 Filter Section
         ElevatedCard(
             modifier = Modifier.fillMaxWidth(),
@@ -314,12 +298,16 @@ fun HomeScreen() {
                 Text("Filter your tasks", style = MaterialTheme.typography.titleMedium)
                 Spacer(Modifier.height(8.dp))
                 Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                    FilterDropdown("Category", listOf("All", "Assignment", "Exam", "Personal"), selectedCategory) {
-                        selectedCategory = it
-                    }
-                    FilterDropdown("Priority", listOf("All", "High", "Medium", "Low"), selectedPriority) {
-                        selectedPriority = it
-                    }
+                    FilterDropdown(
+                        "Category",
+                        listOf("All", "Assignment", "Exam", "Personal"),
+                        selectedCategory
+                    ) { selectedCategory = it }
+                    FilterDropdown(
+                        "Priority",
+                        listOf("All", "High", "Medium", "Low"),
+                        selectedPriority
+                    ) { selectedPriority = it }
                 }
             }
         }
@@ -330,17 +318,26 @@ fun HomeScreen() {
             shape = MaterialTheme.shapes.medium
         ) {
             Column(modifier = Modifier.padding(16.dp)) {
-                Text("🎯 Today's Tasks", style = MaterialTheme.typography.headlineSmall.copy(fontWeight = FontWeight.SemiBold))
+                Text(
+                    "🎯 All Tasks",
+                    style = MaterialTheme.typography.headlineSmall.copy(fontWeight = FontWeight.SemiBold)
+                )
                 Spacer(Modifier.height(8.dp))
 
-                if (filteredTasks.isEmpty()) {
+                val displayedTasks = tasks.filter { task ->
+                    (selectedCategory == "All" || task.category == selectedCategory) &&
+                            (selectedPriority == "All" || task.priority == selectedPriority)
+                }
+
+                if (displayedTasks.isEmpty()) {
                     Column(horizontalAlignment = Alignment.CenterHorizontally) {
                         Icon(Icons.Default.Info, contentDescription = null, tint = MaterialTheme.colorScheme.outline)
                         Text("No tasks match your filters.", style = MaterialTheme.typography.bodyMedium)
                     }
                 } else {
                     Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                        filteredTasks.forEachIndexed { index, task ->
+                        displayedTasks.forEach { task ->
+                            val taskIndex = tasks.indexOf(task)
                             ElevatedCard(
                                 modifier = Modifier.fillMaxWidth(),
                                 shape = MaterialTheme.shapes.medium,
@@ -356,18 +353,20 @@ fun HomeScreen() {
                                     Row(verticalAlignment = Alignment.CenterVertically) {
                                         Checkbox(
                                             checked = task.isDone,
-                                            onCheckedChange = {
+                                            onCheckedChange = { isChecked ->
                                                 tasks = tasks.mapIndexed { i, t ->
-                                                    if (i == index) t.copy(isDone = !t.isDone) else t
+                                                    if (i == taskIndex) t.copy(isDone = isChecked) else t
                                                 }
                                             }
                                         )
                                         Spacer(modifier = Modifier.width(8.dp))
                                         Column {
                                             Text(task.name, style = MaterialTheme.typography.bodyMedium)
-                                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                            Row(
+                                                verticalAlignment = Alignment.CenterVertically,
+                                                horizontalArrangement = Arrangement.spacedBy(8.dp)
+                                            ) {
                                                 Text("📂 ${task.category}", style = MaterialTheme.typography.labelSmall)
-                                                Spacer(modifier = Modifier.width(8.dp))
                                                 AssistChip(
                                                     onClick = {},
                                                     label = { Text(task.priority) },
@@ -380,12 +379,28 @@ fun HomeScreen() {
                                                         }
                                                     )
                                                 )
+                                                val deadlineText = when {
+                                                    !task.scheduledDay.isNullOrBlank() && task.scheduledHour != null ->
+                                                        "🗓 ${task.scheduledDay} at ${task.scheduledHour}:00"
+                                                    !task.scheduledDay.isNullOrBlank() ->
+                                                        "🗓 ${task.scheduledDay}"
+                                                    task.scheduledHour != null ->
+                                                        "🗓 Today at ${task.scheduledHour}:00"
+                                                    else -> "🗓 No deadline"
+                                                }
+                                                Text(
+                                                    text = deadlineText,
+                                                    style = MaterialTheme.typography.labelSmall,
+                                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                                )
                                             }
                                         }
                                     }
+
+                                    // 🔹 Edit & Delete Buttons
                                     Row {
                                         IconButton(onClick = {
-                                            editingTaskIndex = index
+                                            editingTaskIndex = taskIndex
                                             editedPriority = task.priority
                                             editedCategory = task.category
                                             showEditDialog = true
@@ -393,7 +408,8 @@ fun HomeScreen() {
                                             Icon(Icons.Default.Edit, contentDescription = "Edit Task")
                                         }
                                         IconButton(onClick = {
-                                            tasks = tasks.filterIndexed { i, _ -> i != index }
+                                            tasks = tasks.filterIndexed { i, _ -> i != taskIndex }
+                                            scope.launch { TaskPrefs.saveTasks(context, tasks) }
                                         }) {
                                             Icon(Icons.Default.Delete, contentDescription = "Delete Task")
                                         }
@@ -410,6 +426,7 @@ fun HomeScreen() {
         Button(
             onClick = {
                 scope.launch {
+                    // ✅ Save all tasks with current isDone status
                     TaskPrefs.saveTasks(context, tasks)
                 }
             },
@@ -431,15 +448,12 @@ fun HomeScreen() {
                             category = editedCategory
                         ) else t
                     }
+                    scope.launch { TaskPrefs.saveTasks(context, tasks) }
                     showEditDialog = false
-                }) {
-                    Text("Save")
-                }
+                }) { Text("Save") }
             },
             dismissButton = {
-                TextButton(onClick = { showEditDialog = false }) {
-                    Text("Cancel")
-                }
+                TextButton(onClick = { showEditDialog = false }) { Text("Cancel") }
             },
             title = { Text("Edit Task") },
             text = {
@@ -447,10 +461,7 @@ fun HomeScreen() {
                     Text("Select Category", style = MaterialTheme.typography.labelMedium)
                     listOf("Assignment", "Exam", "Personal").forEach { option ->
                         Row(verticalAlignment = Alignment.CenterVertically) {
-                            RadioButton(
-                                selected = editedCategory == option,
-                                onClick = { editedCategory = option }
-                            )
+                            RadioButton(selected = editedCategory == option, onClick = { editedCategory = option })
                             Text(option)
                         }
                     }
@@ -460,10 +471,7 @@ fun HomeScreen() {
                     Text("Select Priority", style = MaterialTheme.typography.labelMedium)
                     listOf("High", "Medium", "Low").forEach { option ->
                         Row(verticalAlignment = Alignment.CenterVertically) {
-                            RadioButton(
-                                selected = editedPriority == option,
-                                onClick = { editedPriority = option }
-                            )
+                            RadioButton(selected = editedPriority == option, onClick = { editedPriority = option })
                             Text(option)
                         }
                     }
@@ -472,9 +480,6 @@ fun HomeScreen() {
         )
     }
 }
-
-
-
 
 
 
@@ -495,8 +500,21 @@ fun TaskManagerScreen() {
     var taskName by remember { mutableStateOf("") }
     var selectedCategory by remember { mutableStateOf("Assignment") }
     var selectedPriority by remember { mutableStateOf("Medium") }
+    var selectedDate by remember { mutableStateOf<String?>(null) }
 
     val scrollState = rememberScrollState()
+
+    // Date Picker Dialog
+    val calendar = Calendar.getInstance()
+    val datePickerDialog = DatePickerDialog(
+        context,
+        { _, year, month, dayOfMonth ->
+            selectedDate = "${year}-${month + 1}-${dayOfMonth}"
+        },
+        calendar.get(Calendar.YEAR),
+        calendar.get(Calendar.MONTH),
+        calendar.get(Calendar.DAY_OF_MONTH)
+    )
 
     Column(
         modifier = Modifier
@@ -504,8 +522,7 @@ fun TaskManagerScreen() {
             .verticalScroll(scrollState)
             .padding(24.dp),
         verticalArrangement = Arrangement.spacedBy(16.dp)
-    )
-    {
+    ) {
         Text("📝 Add New Task", style = MaterialTheme.typography.titleLarge)
 
         OutlinedTextField(
@@ -519,14 +536,30 @@ fun TaskManagerScreen() {
         CategorySelector(selectedCategory) { selectedCategory = it }
         PrioritySelector(selectedPriority) { selectedPriority = it }
 
+        // Date Selector
+        OutlinedButton(
+            onClick = { datePickerDialog.show() },
+            modifier = Modifier.fillMaxWidth()
+        ) {
+            Text(
+                text = selectedDate?.let { "🗓 Deadline: $it" } ?: "Select Deadline"
+            )
+        }
+
         Button(
             onClick = {
                 if (taskName.isNotBlank()) {
                     scope.launch {
                         val current = TaskPrefs.getTasks(context).first()
-                        val newTask = Task(taskName, selectedCategory, selectedPriority)
+                        val newTask = Task(
+                            name = taskName,
+                            category = selectedCategory,
+                            priority = selectedPriority,
+                            scheduledDay = selectedDate
+                        )
                         TaskPrefs.saveTasks(context, current + newTask)
                         taskName = ""
+                        selectedDate = null
                     }
                 }
             },
@@ -591,104 +624,222 @@ fun FilterDropdown(label: String, options: List<String>, selected: String, onSel
 /////////////////////////////////////////////////////
 
 
-
 @Composable
 fun WeeklyPlannerScreen() {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
+
     val daysOfWeek = listOf("Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun")
-    val hours = (8..18).toList()
 
     val savedTasks by TaskPrefs.getTasks(context).collectAsState(initial = emptyList())
-
-    // Keep local editable state separate from saved data
     var editableTasks by remember { mutableStateOf(savedTasks.toMutableList()) }
-
-    // Sync local state with stored data when it changes
-    LaunchedEffect(savedTasks) {
-        editableTasks = savedTasks.toMutableList()
-    }
+    LaunchedEffect(savedTasks) { editableTasks = savedTasks.toMutableList() }
 
     val horizontalScroll = rememberScrollState()
+    var editingTask by remember { mutableStateOf<Task?>(null) }
+
+    // Helper: convert "yyyy-MM-dd" string to day of week
+    fun getDayOfWeek(dateStr: String?): String? {
+        if (dateStr.isNullOrBlank()) return null
+        return try {
+            val parts = dateStr.split("-").map { it.toInt() }
+            val calendar = Calendar.getInstance()
+            calendar.set(parts[0], parts[1] - 1, parts[2])
+            when (calendar.get(Calendar.DAY_OF_WEEK)) {
+                Calendar.MONDAY -> "Mon"
+                Calendar.TUESDAY -> "Tue"
+                Calendar.WEDNESDAY -> "Wed"
+                Calendar.THURSDAY -> "Thu"
+                Calendar.FRIDAY -> "Fri"
+                Calendar.SATURDAY -> "Sat"
+                Calendar.SUNDAY -> "Sun"
+                else -> null
+            }
+        } catch (e: Exception) { null }
+    }
 
     Column(
         modifier = Modifier
             .fillMaxSize()
             .padding(8.dp)
     ) {
-        // --- Save button ---
         Button(
-            onClick = {
-                scope.launch {
-                    TaskPrefs.saveTasks(context, editableTasks)
-                    Toast
-                        .makeText(context, "Tasks saved!", Toast.LENGTH_SHORT)
-                        .show()
-                }
-            },
+            onClick = { scope.launch { TaskPrefs.saveTasks(context, editableTasks) } },
             modifier = Modifier.align(Alignment.End)
         ) {
             Text("Save")
         }
 
-        // --- Planner grid ---
         Row(
             modifier = Modifier
                 .fillMaxSize()
                 .horizontalScroll(horizontalScroll)
-                .padding(top = 8.dp)
+                .padding(top = 8.dp),
+            horizontalArrangement = Arrangement.spacedBy(8.dp)
         ) {
             daysOfWeek.forEach { day ->
                 val verticalScroll = rememberScrollState()
                 Column(
                     modifier = Modifier
                         .width(160.dp)
-                        .padding(8.dp)
+                        .padding(4.dp)
                         .verticalScroll(verticalScroll)
                         .background(Color(0xFFF9F9F9), shape = MaterialTheme.shapes.medium)
+                        .padding(8.dp)
                 ) {
                     Text(
                         text = day,
                         style = MaterialTheme.typography.titleMedium,
-                        modifier = Modifier
-                            .align(Alignment.CenterHorizontally)
-                            .padding(vertical = 12.dp),
+                        modifier = Modifier.align(Alignment.CenterHorizontally),
                         color = MaterialTheme.colorScheme.primary
                     )
+                    Spacer(modifier = Modifier.height(8.dp))
 
-                    hours.forEach { hour ->
-                        val existingTask =
-                            editableTasks.find { it.scheduledDay == day && it.scheduledHour == hour }
-                        var taskText by remember { mutableStateOf(existingTask?.name ?: "") }
+                    // --- Filter tasks for this day ---
+                    val tasksForDay = editableTasks.filter { getDayOfWeek(it.scheduledDay) == day }
 
-                        OutlinedTextField(
-                            value = taskText,
-                            onValueChange = { newValue ->
-                                taskText = newValue
-
-                                // Update local editable list only (not saving yet)
-                                editableTasks = editableTasks
-                                    .filterNot { it.scheduledDay == day && it.scheduledHour == hour }
-                                    .toMutableList()
-                                if (newValue.isNotBlank()) {
-                                    editableTasks.add(
-                                        Task(
-                                            name = newValue,
-                                            scheduledDay = day,
-                                            scheduledHour = hour
-                                        )
-                                    )
+                    if (tasksForDay.isEmpty()) {
+                        Text("No tasks", style = MaterialTheme.typography.bodySmall)
+                    } else {
+                        tasksForDay.forEach { task ->
+                            Row(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(vertical = 2.dp),
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.SpaceBetween
+                            ) {
+                                Column {
+                                    Text(task.name, style = MaterialTheme.typography.bodyMedium, maxLines = 1)
+                                    Text("${task.category} | ${task.priority}", style = MaterialTheme.typography.labelSmall)
                                 }
-                            },
-                            label = { Text("$hour:00") },
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .padding(bottom = 4.dp),
-                            singleLine = true
-                        )
+
+                                IconButton(onClick = { editingTask = task }) {
+                                    Icon(Icons.Default.Edit, contentDescription = "Edit Task")
+                                }
+                            }
+                        }
                     }
                 }
             }
         }
     }
+
+    // --- Edit Dialog ---
+    editingTask?.let { task ->
+        var editedCategory by remember { mutableStateOf(task.category) }
+        var editedPriority by remember { mutableStateOf(task.priority) }
+
+        AlertDialog(
+            onDismissRequest = { editingTask = null },
+            title = { Text("Edit Task") },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Text("Category")
+                    listOf("Assignment", "Exam", "Personal").forEach { option ->
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            RadioButton(selected = editedCategory == option, onClick = { editedCategory = option })
+                            Text(option)
+                        }
+                    }
+
+                    Text("Priority")
+                    listOf("High", "Medium", "Low").forEach { option ->
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            RadioButton(selected = editedPriority == option, onClick = { editedPriority = option })
+                            Text(option)
+                        }
+                    }
+                }
+            },
+            confirmButton = {
+                TextButton(onClick = {
+                    editableTasks = editableTasks.map {
+                        if (it.name == task.name && it.scheduledDay == task.scheduledDay)
+                            it.copy(category = editedCategory, priority = editedPriority)
+                        else it
+                    }.toMutableList()
+                    editingTask = null
+                }) { Text("Save") }
+            },
+            dismissButton = {
+                TextButton(onClick = { editingTask = null }) { Text("Cancel") }
+            }
+        )
+    }
 }
+
+
+@Composable
+fun DashboardScreen() {
+    val context = LocalContext.current
+    val tasks by TaskPrefs.getTasks(context).collectAsState(initial = emptyList())
+
+    // Helper to convert date string to Calendar
+    fun dateToCalendar(dateStr: String?): Calendar? {
+        if (dateStr.isNullOrBlank()) return null
+        return try {
+            val parts = dateStr.split("-").map { it.toInt() }
+            Calendar.getInstance().apply {
+                set(parts[0], parts[1] - 1, parts[2], 23, 59) // end of day
+            }
+        } catch (e: Exception) { null }
+    }
+
+    val now = Calendar.getInstance()
+
+    val finishedTasks = tasks.count { it.isDone }
+    val pastDeadlineTasks = tasks.count {
+        !it.isDone && dateToCalendar(it.scheduledDay)?.before(now) == true
+    }
+    val pendingTasks = tasks.count {
+        !it.isDone && dateToCalendar(it.scheduledDay)?.after(now) != false
+    }
+
+    val totalTasks = tasks.size.coerceAtLeast(1) // avoid division by 0
+
+    val finishedPercent = (finishedTasks * 100 / totalTasks)
+    val pastDeadlinePercent = (pastDeadlineTasks * 100 / totalTasks)
+    val pendingPercent = (pendingTasks * 100 / totalTasks)
+
+    Column(
+        modifier = Modifier
+            .fillMaxSize()
+            .padding(24.dp),
+        verticalArrangement = Arrangement.spacedBy(32.dp),
+        horizontalAlignment = Alignment.CenterHorizontally
+    ) {
+        Text("📊 Dashboard", style = MaterialTheme.typography.headlineMedium)
+
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceEvenly
+        ) {
+            DashboardCard("Pending", pendingPercent, Color(0xFFFFC107)) // amber
+            DashboardCard("Finished", finishedPercent, Color(0xFF4CAF50)) // green
+            DashboardCard("Past Deadline", pastDeadlinePercent, Color(0xFFF44336)) // red
+        }
+    }
+}
+
+@Composable
+fun DashboardCard(title: String, percent: Int, color: Color) {
+    Column(
+        modifier = Modifier
+            .width(100.dp)
+            .padding(8.dp),
+        horizontalAlignment = Alignment.CenterHorizontally
+    ) {
+        // Circular progress bar
+        CircularProgressIndicator(
+            progress = percent / 100f,
+            strokeWidth = 8.dp,
+            color = color,
+            modifier = Modifier.size(80.dp)
+        )
+        Spacer(modifier = Modifier.height(8.dp))
+        Text("$percent%", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+        Text(title, style = MaterialTheme.typography.bodyMedium, maxLines = 1)
+    }
+}
+
