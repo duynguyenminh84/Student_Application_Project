@@ -55,6 +55,11 @@ class AuthViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     fun logout() {
-        viewModelScope.launch { AuthPrefs.clear(getApplication()) }
+        viewModelScope.launch {
+            _error.value = null
+            AuthPrefs.clear(getApplication())   // sets current user id to -1 (or null)
+            // No need to manually toggle isLoggedIn; it's derived from the flow.
+        }
     }
+
 }

@@ -90,7 +90,7 @@ class MainActivity : ComponentActivity() {
                     ) { innerPadding ->
                         Box(modifier = Modifier.padding(innerPadding)) {
                             when (currentScreen) {
-                                Screen.Home          -> HomeScreen(uid = uid)
+                                Screen.Home          -> HomeScreen(uid = uid, onLogout = { authVm.logout() })
                                 Screen.TaskManager   -> TaskManagerScreen(uid = uid)
                                 Screen.WeeklyPlanner -> WeeklyPlannerScreen(uid = uid)
                                 Screen.Dashboard     -> DashboardScreen(uid = uid)
@@ -183,9 +183,11 @@ fun LoginScreen(
 }
 
 /* ---------- Home ---------- */
-
 @Composable
-fun HomeScreen(uid: Long) {
+fun HomeScreen(
+    uid: Long,
+    onLogout: () -> Unit = {}
+) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
     var tasks by remember { mutableStateOf(listOf<Task>()) }
@@ -224,14 +226,24 @@ fun HomeScreen(uid: Long) {
             .padding(horizontal = 24.dp, vertical = 16.dp),
         verticalArrangement = Arrangement.spacedBy(24.dp)
     ) {
-        Text(
-            text = "📋 Task Reminder",
-            style = MaterialTheme.typography.headlineSmall.copy(
-                fontWeight = FontWeight.Bold,
-                letterSpacing = 1.2.sp
-            ),
-            color = MaterialTheme.colorScheme.primary
-        )
+        // Title + Logout button
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Text(
+                text = "📋 Task Reminder",
+                style = MaterialTheme.typography.headlineSmall.copy(
+                    fontWeight = FontWeight.Bold,
+                    letterSpacing = 1.2.sp
+                ),
+                color = MaterialTheme.colorScheme.primary
+            )
+            TextButton(onClick = onLogout) {
+                Text("Log out")
+            }
+        }
 
         val quoteOfTheDay = remember { motivationalQuotes.random() }
         Box(
@@ -306,7 +318,11 @@ fun HomeScreen(uid: Long) {
 
                 if (displayedTasks.isEmpty()) {
                     Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                        Icon(Icons.Default.Info, contentDescription = null, tint = MaterialTheme.colorScheme.outline)
+                        Icon(
+                            Icons.Default.Info,
+                            contentDescription = null,
+                            tint = MaterialTheme.colorScheme.outline
+                        )
                         Text("No tasks match your filters.", style = MaterialTheme.typography.bodyMedium)
                     }
                 } else {
@@ -433,6 +449,7 @@ fun HomeScreen(uid: Long) {
         )
     }
 }
+
 
 /* ---------- Task Manager ---------- */
 
