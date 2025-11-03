@@ -12,14 +12,7 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.Add
-import androidx.compose.material.icons.filled.Check
-import androidx.compose.material.icons.filled.DateRange
-import androidx.compose.material.icons.filled.Delete
-import androidx.compose.material.icons.filled.Edit
-import androidx.compose.material.icons.filled.Home
-import androidx.compose.material.icons.filled.Info
-import androidx.compose.material.icons.filled.Star
+import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.runtime.saveable.rememberSaveable
@@ -51,8 +44,9 @@ class MainActivity : ComponentActivity() {
                 val authVm: AuthViewModel = viewModel()
                 val isLoggedIn by authVm.isLoggedIn.collectAsState()
                 val error by authVm.error.collectAsState()
+                val uid by authVm.currentUserId.collectAsState() // current user id
 
-                // Always require login on app launch
+                // Always require login on app launch (remove this if you want auto-login)
                 LaunchedEffect(Unit) { authVm.logout() }
 
                 if (!isLoggedIn) {
@@ -96,10 +90,10 @@ class MainActivity : ComponentActivity() {
                     ) { innerPadding ->
                         Box(modifier = Modifier.padding(innerPadding)) {
                             when (currentScreen) {
-                                Screen.Home -> HomeScreen()
-                                Screen.TaskManager -> TaskManagerScreen()
-                                Screen.WeeklyPlanner -> WeeklyPlannerScreen()
-                                Screen.Dashboard -> DashboardScreen()
+                                Screen.Home          -> HomeScreen(uid = uid)
+                                Screen.TaskManager   -> TaskManagerScreen(uid = uid)
+                                Screen.WeeklyPlanner -> WeeklyPlannerScreen(uid = uid)
+                                Screen.Dashboard     -> DashboardScreen(uid = uid)
                             }
                         }
                     }
@@ -191,7 +185,7 @@ fun LoginScreen(
 /* ---------- Home ---------- */
 
 @Composable
-fun HomeScreen() {
+fun HomeScreen(uid: Long) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
     var tasks by remember { mutableStateOf(listOf<Task>()) }
@@ -205,6 +199,11 @@ fun HomeScreen() {
     var editedCategory by remember { mutableStateOf("Assignment") }
     var showEditDialog by remember { mutableStateOf(false) }
 
+    // Load tasks for this user whenever uid changes
+    LaunchedEffect(uid) {
+        TaskPrefs.getTasks(context, uid).collect { loaded -> tasks = loaded }
+    }
+
     val motivationalQuotes = listOf(
         "Dream big. Start small. But most of all, start. – Simon Sinek",
         "The way to get started is to quit talking and begin doing. – Walt Disney",
@@ -215,11 +214,6 @@ fun HomeScreen() {
         "Vision without execution is hallucination. – Thomas Edison",
         "When everything seems to be going against you, remember that the airplane takes off against the wind. – Henry Ford"
     )
-
-    // Load tasks
-    LaunchedEffect(Unit) {
-        TaskPrefs.getTasks(context).collect { loaded -> tasks = loaded }
-    }
 
     val scrollState = rememberScrollState()
 
@@ -312,11 +306,7 @@ fun HomeScreen() {
 
                 if (displayedTasks.isEmpty()) {
                     Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                        Icon(
-                            Icons.Default.Info,
-                            contentDescription = null,
-                            tint = MaterialTheme.colorScheme.outline
-                        )
+                        Icon(Icons.Default.Info, contentDescription = null, tint = MaterialTheme.colorScheme.outline)
                         Text("No tasks match your filters.", style = MaterialTheme.typography.bodyMedium)
                     }
                 } else {
@@ -342,7 +332,7 @@ fun HomeScreen() {
                                                 tasks = tasks.mapIndexed { i, t ->
                                                     if (i == taskIndex) t.copy(isDone = isChecked) else t
                                                 }
-                                                scope.launch { TaskPrefs.saveTasks(context, tasks) }
+                                                scope.launch { TaskPrefs.saveTasks(context, uid, tasks) }
                                             }
                                         )
                                         Spacer(modifier = Modifier.width(8.dp))
@@ -386,12 +376,12 @@ fun HomeScreen() {
 
                                         IconButton(onClick = {
                                             tasks = tasks.filterIndexed { i, _ -> i != taskIndex }
-                                            scope.launch { TaskPrefs.saveTasks(context, tasks) }
+                                            scope.launch { TaskPrefs.saveTasks(context, uid, tasks) }
                                         }) { Icon(Icons.Default.Delete, contentDescription = "Delete Task") }
 
                                         TextButton(onClick = {
                                             tasks = tasks.filterIndexed { i, _ -> i != taskIndex }
-                                            scope.launch { TaskPrefs.saveTasks(context, tasks) }
+                                            scope.launch { TaskPrefs.saveTasks(context, uid, tasks) }
                                         }) { Text("Remove") }
                                     }
                                 }
@@ -415,7 +405,7 @@ fun HomeScreen() {
                             category = editedCategory
                         ) else t
                     }
-                    scope.launch { TaskPrefs.saveTasks(context, tasks) }
+                    scope.launch { TaskPrefs.saveTasks(context, uid, tasks) }
                     showEditDialog = false
                 }) { Text("Save") }
             },
@@ -447,7 +437,7 @@ fun HomeScreen() {
 /* ---------- Task Manager ---------- */
 
 @Composable
-fun TaskManagerScreen() {
+fun TaskManagerScreen(uid: Long) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
 
@@ -461,9 +451,7 @@ fun TaskManagerScreen() {
     val calendar = Calendar.getInstance()
     val datePickerDialog = DatePickerDialog(
         context,
-        { _, year, month, dayOfMonth ->
-            selectedDate = "$year-${month + 1}-$dayOfMonth"
-        },
+        { _, y, m, d -> selectedDate = "$y-${m + 1}-$d" },
         calendar.get(Calendar.YEAR),
         calendar.get(Calendar.MONTH),
         calendar.get(Calendar.DAY_OF_MONTH)
@@ -497,14 +485,14 @@ fun TaskManagerScreen() {
             onClick = {
                 if (taskName.isNotBlank()) {
                     scope.launch {
-                        val current = TaskPrefs.getTasks(context).first()
+                        val current = TaskPrefs.getTasks(context, uid).first()
                         val newTask = Task(
                             name = taskName,
                             category = selectedCategory,
                             priority = selectedPriority,
                             scheduledDay = selectedDate
                         )
-                        TaskPrefs.saveTasks(context, current + newTask)
+                        TaskPrefs.saveTasks(context, uid, current + newTask)
                         taskName = ""
                         selectedDate = null
                     }
@@ -564,20 +552,19 @@ fun FilterDropdown(label: String, options: List<String>, selected: String, onSel
 /* ---------- Weekly Planner ---------- */
 
 @Composable
-fun WeeklyPlannerScreen() {
+fun WeeklyPlannerScreen(uid: Long) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
 
-    fun persist(tasks: List<Task>) {
-        scope.launch { TaskPrefs.saveTasks(context, tasks) }
-    }
-
-    val daysOfWeek = listOf("Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun")
-
-    val savedTasks by TaskPrefs.getTasks(context).collectAsState(initial = emptyList())
+    val savedTasks by TaskPrefs.getTasks(context, uid).collectAsState(initial = emptyList())
     var editableTasks by remember { mutableStateOf(savedTasks.toMutableList()) }
     LaunchedEffect(savedTasks) { editableTasks = savedTasks.toMutableList() }
 
+    fun persist(list: List<Task>) {
+        scope.launch { TaskPrefs.saveTasks(context, uid, list) }
+    }
+
+    val daysOfWeek = listOf("Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun")
     val horizontalScroll = rememberScrollState()
     var editingIndex by remember { mutableStateOf<Int?>(null) }
 
@@ -585,10 +572,8 @@ fun WeeklyPlannerScreen() {
         if (dateStr.isNullOrBlank()) return null
         return try {
             val parts = dateStr.split("-").map { it.toInt() }
-            val calendar = Calendar.getInstance().apply {
-                set(parts[0], parts[1] - 1, parts[2])
-            }
-            when (calendar.get(Calendar.DAY_OF_WEEK)) {
+            val cal = Calendar.getInstance().apply { set(parts[0], parts[1] - 1, parts[2]) }
+            when (cal.get(Calendar.DAY_OF_WEEK)) {
                 Calendar.MONDAY -> "Mon"
                 Calendar.TUESDAY -> "Tue"
                 Calendar.WEDNESDAY -> "Wed"
@@ -669,10 +654,7 @@ fun WeeklyPlannerScreen() {
                                         style = MaterialTheme.typography.labelSmall,
                                         color = MaterialTheme.colorScheme.onSurfaceVariant
                                     )
-                                    Text(
-                                        "${task.category} | ${task.priority}",
-                                        style = MaterialTheme.typography.labelSmall
-                                    )
+                                    Text("${task.category} | ${task.priority}", style = MaterialTheme.typography.labelSmall)
                                 }
                                 Row {
                                     IconButton(onClick = { editingIndex = globalIdx }) {
@@ -708,10 +690,7 @@ fun WeeklyPlannerScreen() {
                         Text("Category", style = MaterialTheme.typography.labelMedium)
                         listOf("Assignment", "Exam", "Personal").forEach { option ->
                             Row(verticalAlignment = Alignment.CenterVertically) {
-                                RadioButton(
-                                    selected = editedCategory == option,
-                                    onClick = { editedCategory = option }
-                                )
+                                RadioButton(selected = editedCategory == option, onClick = { editedCategory = option })
                                 Text(option)
                             }
                         }
@@ -719,10 +698,7 @@ fun WeeklyPlannerScreen() {
                         Text("Priority", style = MaterialTheme.typography.labelMedium)
                         listOf("High", "Medium", "Low").forEach { option ->
                             Row(verticalAlignment = Alignment.CenterVertically) {
-                                RadioButton(
-                                    selected = editedPriority == option,
-                                    onClick = { editedPriority = option }
-                                )
+                                RadioButton(selected = editedPriority == option, onClick = { editedPriority = option })
                                 Text(option)
                             }
                         }
@@ -749,10 +725,27 @@ fun WeeklyPlannerScreen() {
 /* ---------- Dashboard ---------- */
 
 @Composable
-fun DashboardScreen() {
+fun DashboardScreen(uid: Long) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
-    val tasks by TaskPrefs.getTasks(context).collectAsState(initial = emptyList())
+    val tasks by TaskPrefs.getTasks(context, uid).collectAsState(initial = emptyList())
+
+    fun setDone(task: Task) {
+        val idx = tasks.indexOf(task)
+        if (idx >= 0) {
+            val newList = tasks.toMutableList()
+            newList[idx] = newList[idx].copy(isDone = true)
+            scope.launch { TaskPrefs.saveTasks(context, uid, newList) }
+        }
+    }
+    fun removeTask(task: Task) {
+        val idx = tasks.indexOf(task)
+        if (idx >= 0) {
+            val newList = tasks.toMutableList()
+            newList.removeAt(idx)
+            scope.launch { TaskPrefs.saveTasks(context, uid, newList) }
+        }
+    }
 
     fun parseDate(dateStr: String?): Calendar? {
         if (dateStr.isNullOrBlank()) return null
@@ -820,23 +813,6 @@ fun DashboardScreen() {
         return streak
     }
     val streakDays = completionStreakDays()
-
-    fun setDone(task: Task) {
-        val idx = tasks.indexOf(task)
-        if (idx >= 0) {
-            val newList = tasks.toMutableList()
-            newList[idx] = newList[idx].copy(isDone = true)
-            scope.launch { TaskPrefs.saveTasks(context, newList) }
-        }
-    }
-    fun removeTask(task: Task) {
-        val idx = tasks.indexOf(task)
-        if (idx >= 0) {
-            val newList = tasks.toMutableList()
-            newList.removeAt(idx)
-            scope.launch { TaskPrefs.saveTasks(context, newList) }
-        }
-    }
 
     val ringProgress by animateFloatAsState(targetValue = finishedPct / 100f, label = "progressAnim")
 

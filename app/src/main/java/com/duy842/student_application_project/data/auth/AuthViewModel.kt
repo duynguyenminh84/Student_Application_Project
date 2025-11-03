@@ -14,12 +14,10 @@ import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 
 class AuthViewModel(app: Application) : AndroidViewModel(app) {
-    // was: private val db = AppDatabase.get(app)
     private val db = AppDatabase.getInstance(app)
-
-
     private val repo = AuthRepository(db.userDao())
 
+    // observe current user id from prefs
     val currentUserId: StateFlow<Long> = AuthPrefs.currentUserId(app).stateIn(
         viewModelScope, SharingStarted.WhileSubscribed(5_000), -1L
     )
@@ -34,7 +32,9 @@ class AuthViewModel(app: Application) : AndroidViewModel(app) {
         viewModelScope.launch {
             _error.value = null
             repo.login(email, password)
-                .onSuccess { user -> AuthPrefs.setCurrentUser(getApplication(), user.id) }
+                .onSuccess { user ->
+                    AuthPrefs.setCurrentUser(getApplication(), user.id)
+                }
                 .onFailure { e -> _error.value = e.message }
         }
     }
@@ -44,10 +44,12 @@ class AuthViewModel(app: Application) : AndroidViewModel(app) {
             if (email.isBlank() || password.isBlank()) {
                 _error.value = "Please enter your new email password"
                 return@launch
-                }
+            }
             _error.value = null
             repo.register(email, password)
-                .onSuccess { id -> AuthPrefs.setCurrentUser(getApplication(), id) }
+                .onSuccess { id ->
+                    AuthPrefs.setCurrentUser(getApplication(), id)
+                }
                 .onFailure { e -> _error.value = e.message }
         }
     }
