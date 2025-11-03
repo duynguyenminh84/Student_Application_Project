@@ -35,6 +35,8 @@ import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
 import java.util.Calendar
 import android.app.DatePickerDialog
+import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.material.icons.filled.Check
 import androidx.compose.ui.unit.sp
 import com.duy842.student_application_project.ui.theme.Student_Application_ProjectTheme
 import kotlinx.coroutines.flow.first
@@ -226,6 +228,7 @@ fun HomeScreen() {
         "When everything seems to be going against you, remember that the airplane takes off against the wind. – Henry Ford"
     )
 
+    // Load tasks
     LaunchedEffect(Unit) {
         TaskPrefs.getTasks(context).collect { loaded ->
             tasks = loaded
@@ -343,24 +346,28 @@ fun HomeScreen() {
                                 shape = MaterialTheme.shapes.medium,
                                 elevation = CardDefaults.elevatedCardElevation(defaultElevation = 4.dp)
                             ) {
-                                Row(
+                                // Details + actions (actions below so they’re always visible)
+                                Column(
                                     modifier = Modifier
                                         .padding(16.dp)
-                                        .fillMaxWidth(),
-                                    horizontalArrangement = Arrangement.SpaceBetween,
-                                    verticalAlignment = Alignment.CenterVertically
+                                        .fillMaxWidth()
                                 ) {
-                                    Row(verticalAlignment = Alignment.CenterVertically) {
+                                    Row(
+                                        modifier = Modifier.fillMaxWidth(),
+                                        horizontalArrangement = Arrangement.Start,
+                                        verticalAlignment = Alignment.CenterVertically
+                                    ) {
                                         Checkbox(
                                             checked = task.isDone,
                                             onCheckedChange = { isChecked ->
                                                 tasks = tasks.mapIndexed { i, t ->
                                                     if (i == taskIndex) t.copy(isDone = isChecked) else t
                                                 }
+                                                scope.launch { TaskPrefs.saveTasks(context, tasks) } // persist toggle
                                             }
                                         )
                                         Spacer(modifier = Modifier.width(8.dp))
-                                        Column {
+                                        Column(Modifier.weight(1f)) {
                                             Text(task.name, style = MaterialTheme.typography.bodyMedium)
                                             Row(
                                                 verticalAlignment = Alignment.CenterVertically,
@@ -382,10 +389,8 @@ fun HomeScreen() {
                                                 val deadlineText = when {
                                                     !task.scheduledDay.isNullOrBlank() && task.scheduledHour != null ->
                                                         "🗓 ${task.scheduledDay} at ${task.scheduledHour}:00"
-                                                    !task.scheduledDay.isNullOrBlank() ->
-                                                        "🗓 ${task.scheduledDay}"
-                                                    task.scheduledHour != null ->
-                                                        "🗓 Today at ${task.scheduledHour}:00"
+                                                    !task.scheduledDay.isNullOrBlank() -> "🗓 ${task.scheduledDay}"
+                                                    task.scheduledHour != null -> "🗓 Today at ${task.scheduledHour}:00"
                                                     else -> "🗓 No deadline"
                                                 }
                                                 Text(
@@ -397,8 +402,14 @@ fun HomeScreen() {
                                         }
                                     }
 
-                                    // 🔹 Edit & Delete Buttons
-                                    Row {
+                                    Divider(modifier = Modifier.padding(top = 12.dp, bottom = 8.dp))
+
+                                    Row(
+                                        modifier = Modifier.fillMaxWidth(),
+                                        horizontalArrangement = Arrangement.End,
+                                        verticalAlignment = Alignment.CenterVertically
+                                    ) {
+                                        // Edit
                                         IconButton(onClick = {
                                             editingTaskIndex = taskIndex
                                             editedPriority = task.priority
@@ -407,11 +418,21 @@ fun HomeScreen() {
                                         }) {
                                             Icon(Icons.Default.Edit, contentDescription = "Edit Task")
                                         }
+
+                                        // Trash icon (delete)
                                         IconButton(onClick = {
                                             tasks = tasks.filterIndexed { i, _ -> i != taskIndex }
-                                            scope.launch { TaskPrefs.saveTasks(context, tasks) }
+                                            scope.launch { TaskPrefs.saveTasks(context, tasks) } // persist
                                         }) {
                                             Icon(Icons.Default.Delete, contentDescription = "Delete Task")
+                                        }
+
+                                        // Explicit "Remove" text button (same as delete)
+                                        TextButton(onClick = {
+                                            tasks = tasks.filterIndexed { i, _ -> i != taskIndex }
+                                            scope.launch { TaskPrefs.saveTasks(context, tasks) } // persist
+                                        }) {
+                                            Text("Remove")
                                         }
                                     }
                                 }
@@ -420,19 +441,6 @@ fun HomeScreen() {
                     }
                 }
             }
-        }
-
-        // 🔹 Save Button
-        Button(
-            onClick = {
-                scope.launch {
-                    // ✅ Save all tasks with current isDone status
-                    TaskPrefs.saveTasks(context, tasks)
-                }
-            },
-            modifier = Modifier.fillMaxWidth()
-        ) {
-            Text("💾 Save Tasks", style = MaterialTheme.typography.titleMedium)
         }
     }
 
@@ -629,6 +637,10 @@ fun WeeklyPlannerScreen() {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
 
+    fun persist(tasks: List<Task>) {
+        scope.launch { TaskPrefs.saveTasks(context, tasks) }
+    }
+
     val daysOfWeek = listOf("Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun")
 
     val savedTasks by TaskPrefs.getTasks(context).collectAsState(initial = emptyList())
@@ -636,15 +648,16 @@ fun WeeklyPlannerScreen() {
     LaunchedEffect(savedTasks) { editableTasks = savedTasks.toMutableList() }
 
     val horizontalScroll = rememberScrollState()
-    var editingTask by remember { mutableStateOf<Task?>(null) }
+    var editingIndex by remember { mutableStateOf<Int?>(null) }
 
-    // Helper: convert "yyyy-MM-dd" string to day of week
+    // Helper: convert "yyyy-MM-dd" (or "yyyy-M-d") to day of week
     fun getDayOfWeek(dateStr: String?): String? {
         if (dateStr.isNullOrBlank()) return null
         return try {
             val parts = dateStr.split("-").map { it.toInt() }
-            val calendar = Calendar.getInstance()
-            calendar.set(parts[0], parts[1] - 1, parts[2])
+            val calendar = Calendar.getInstance().apply {
+                set(parts[0], parts[1] - 1, parts[2])
+            }
             when (calendar.get(Calendar.DAY_OF_WEEK)) {
                 Calendar.MONDAY -> "Mon"
                 Calendar.TUESDAY -> "Tue"
@@ -655,7 +668,20 @@ fun WeeklyPlannerScreen() {
                 Calendar.SUNDAY -> "Sun"
                 else -> null
             }
-        } catch (e: Exception) { null }
+        } catch (_: Exception) { null }
+    }
+
+    // NEW: pretty format the stored date string (handles single-digit month/day)
+    fun prettyDate(dateStr: String?): String {
+        if (dateStr.isNullOrBlank()) return "No date"
+        return try {
+            val inFmt = java.text.SimpleDateFormat("yyyy-M-d", java.util.Locale.getDefault())
+            val date = inFmt.parse(dateStr)
+            val outFmt = java.text.SimpleDateFormat("EEE, d MMM yyyy", java.util.Locale.getDefault())
+            outFmt.format(date!!)
+        } catch (_: Exception) {
+            dateStr // fallback to raw
+        }
     }
 
     Column(
@@ -664,11 +690,9 @@ fun WeeklyPlannerScreen() {
             .padding(8.dp)
     ) {
         Button(
-            onClick = { scope.launch { TaskPrefs.saveTasks(context, editableTasks) } },
+            onClick = { persist(editableTasks) },
             modifier = Modifier.align(Alignment.End)
-        ) {
-            Text("Save")
-        }
+        ) { Text("Save") }
 
         Row(
             modifier = Modifier
@@ -681,7 +705,7 @@ fun WeeklyPlannerScreen() {
                 val verticalScroll = rememberScrollState()
                 Column(
                     modifier = Modifier
-                        .width(160.dp)
+                        .width(180.dp)
                         .padding(4.dp)
                         .verticalScroll(verticalScroll)
                         .background(Color(0xFFF9F9F9), shape = MaterialTheme.shapes.medium)
@@ -695,27 +719,48 @@ fun WeeklyPlannerScreen() {
                     )
                     Spacer(modifier = Modifier.height(8.dp))
 
-                    // --- Filter tasks for this day ---
-                    val tasksForDay = editableTasks.filter { getDayOfWeek(it.scheduledDay) == day }
+                    // Tasks for this day (keep global indices)
+                    val indicesForDay = editableTasks.mapIndexedNotNull { idx, t ->
+                        if (getDayOfWeek(t.scheduledDay) == day) idx else null
+                    }
 
-                    if (tasksForDay.isEmpty()) {
+                    if (indicesForDay.isEmpty()) {
                         Text("No tasks", style = MaterialTheme.typography.bodySmall)
                     } else {
-                        tasksForDay.forEach { task ->
+                        indicesForDay.forEach { globalIdx ->
+                            val task = editableTasks[globalIdx]
                             Row(
                                 modifier = Modifier
                                     .fillMaxWidth()
-                                    .padding(vertical = 2.dp),
+                                    .padding(vertical = 4.dp),
                                 verticalAlignment = Alignment.CenterVertically,
                                 horizontalArrangement = Arrangement.SpaceBetween
                             ) {
-                                Column {
+                                Column(Modifier.weight(1f)) {
                                     Text(task.name, style = MaterialTheme.typography.bodyMedium, maxLines = 1)
-                                    Text("${task.category} | ${task.priority}", style = MaterialTheme.typography.labelSmall)
+                                    // NEW: show the actual deadline date picked
+                                    Text(
+                                        prettyDate(task.scheduledDay),
+                                        style = MaterialTheme.typography.labelSmall,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                                    )
+                                    Text(
+                                        "${task.category} | ${task.priority}",
+                                        style = MaterialTheme.typography.labelSmall
+                                    )
+
                                 }
 
-                                IconButton(onClick = { editingTask = task }) {
-                                    Icon(Icons.Default.Edit, contentDescription = "Edit Task")
+                                Row {
+                                    IconButton(onClick = { editingIndex = globalIdx }) {
+                                        Icon(Icons.Default.Edit, contentDescription = "Edit Task")
+                                    }
+                                    IconButton(onClick = {
+                                        editableTasks.removeAt(globalIdx)
+                                        persist(editableTasks) // save immediately
+                                    }) {
+                                        Icon(Icons.Default.Delete, contentDescription = "Delete Task")
+                                    }
                                 }
                             }
                         }
@@ -725,17 +770,18 @@ fun WeeklyPlannerScreen() {
         }
     }
 
-    // --- Edit Dialog ---
-    editingTask?.let { task ->
+    // Edit dialog (by global index)
+    editingIndex?.let { idx ->
+        val task = editableTasks[idx]
         var editedCategory by remember { mutableStateOf(task.category) }
         var editedPriority by remember { mutableStateOf(task.priority) }
 
         AlertDialog(
-            onDismissRequest = { editingTask = null },
+            onDismissRequest = { editingIndex = null },
             title = { Text("Edit Task") },
             text = {
                 Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                    Text("Category")
+                    Text("Category", style = MaterialTheme.typography.labelMedium)
                     listOf("Assignment", "Exam", "Personal").forEach { option ->
                         Row(verticalAlignment = Alignment.CenterVertically) {
                             RadioButton(selected = editedCategory == option, onClick = { editedCategory = option })
@@ -743,7 +789,7 @@ fun WeeklyPlannerScreen() {
                         }
                     }
 
-                    Text("Priority")
+                    Text("Priority", style = MaterialTheme.typography.labelMedium)
                     listOf("High", "Medium", "Low").forEach { option ->
                         Row(verticalAlignment = Alignment.CenterVertically) {
                             RadioButton(selected = editedPriority == option, onClick = { editedPriority = option })
@@ -754,16 +800,16 @@ fun WeeklyPlannerScreen() {
             },
             confirmButton = {
                 TextButton(onClick = {
-                    editableTasks = editableTasks.map {
-                        if (it.name == task.name && it.scheduledDay == task.scheduledDay)
-                            it.copy(category = editedCategory, priority = editedPriority)
-                        else it
-                    }.toMutableList()
-                    editingTask = null
+                    editableTasks[idx] = editableTasks[idx].copy(
+                        category = editedCategory,
+                        priority = editedPriority
+                    )
+                    persist(editableTasks)
+                    editingIndex = null
                 }) { Text("Save") }
             },
             dismissButton = {
-                TextButton(onClick = { editingTask = null }) { Text("Cancel") }
+                TextButton(onClick = { editingIndex = null }) { Text("Cancel") }
             }
         )
     }
@@ -773,73 +819,263 @@ fun WeeklyPlannerScreen() {
 @Composable
 fun DashboardScreen() {
     val context = LocalContext.current
+    val scope = rememberCoroutineScope()
     val tasks by TaskPrefs.getTasks(context).collectAsState(initial = emptyList())
 
-    // Helper to convert date string to Calendar
-    fun dateToCalendar(dateStr: String?): Calendar? {
+    // ---- helpers ----
+    fun parseDate(dateStr: String?): Calendar? {
         if (dateStr.isNullOrBlank()) return null
         return try {
-            val parts = dateStr.split("-").map { it.toInt() }
+            val parts = dateStr.split("-").map { it.toInt() } // yyyy-M-d
             Calendar.getInstance().apply {
-                set(parts[0], parts[1] - 1, parts[2], 23, 59) // end of day
+                set(parts[0], parts[1] - 1, parts[2], 0, 0, 0)
+                set(Calendar.MILLISECOND, 0)
             }
-        } catch (e: Exception) { null }
+        } catch (_: Exception) { null }
+    }
+    fun fmt(dateStr: String?): String {
+        if (dateStr.isNullOrBlank()) return "—"
+        return try {
+            val inf = java.text.SimpleDateFormat("yyyy-M-d", java.util.Locale.getDefault())
+            val d = inf.parse(dateStr) ?: return "—"
+            val outf = java.text.SimpleDateFormat("EEE, d MMM", java.util.Locale.getDefault())
+            outf.format(d)
+        } catch (_: Exception) { "—" }
+    }
+    fun daysBetween(a: Calendar, b: Calendar): Int {
+        val aa = a.clone() as Calendar; aa.set(Calendar.HOUR_OF_DAY,0); aa.set(Calendar.MINUTE,0); aa.set(Calendar.SECOND,0); aa.set(Calendar.MILLISECOND,0)
+        val bb = b.clone() as Calendar; bb.set(Calendar.HOUR_OF_DAY,0); bb.set(Calendar.MINUTE,0); bb.set(Calendar.SECOND,0); bb.set(Calendar.MILLISECOND,0)
+        val diff = aa.timeInMillis - bb.timeInMillis
+        return (diff / (24*60*60*1000L)).toInt()
     }
 
-    val now = Calendar.getInstance()
-
-    val finishedTasks = tasks.count { it.isDone }
-    val pastDeadlineTasks = tasks.count {
-        !it.isDone && dateToCalendar(it.scheduledDay)?.before(now) == true
-    }
-    val pendingTasks = tasks.count {
-        !it.isDone && dateToCalendar(it.scheduledDay)?.after(now) != false
+    val today = Calendar.getInstance().apply {
+        set(Calendar.HOUR_OF_DAY, 0); set(Calendar.MINUTE, 0); set(Calendar.SECOND, 0); set(Calendar.MILLISECOND, 0)
     }
 
-    val totalTasks = tasks.size.coerceAtLeast(1) // avoid division by 0
+    // ---- status buckets ----
+    val total = tasks.size.coerceAtLeast(1)
+    val finished = tasks.count { it.isDone }
+    val overdue = tasks.count { !it.isDone && (parseDate(it.scheduledDay)?.before(today) == true) }
+    val pending = tasks.count {
+        !it.isDone && when (val c = parseDate(it.scheduledDay)) {
+            null -> true // no date = treat as pending
+            else -> !c.before(today)
+        }
+    }
 
-    val finishedPercent = (finishedTasks * 100 / totalTasks)
-    val pastDeadlinePercent = (pastDeadlineTasks * 100 / totalTasks)
-    val pendingPercent = (pendingTasks * 100 / totalTasks)
+    val finishedPct = (finished * 100f / total)
+    val pendingPct = (pending * 100f / total)
+    val overduePct = (overdue * 100f / total)
+
+    // ---- next due & lists ----
+    val upcomingList = tasks
+        .filter { !it.isDone && parseDate(it.scheduledDay)?.after(today) == true }
+        .sortedBy { parseDate(it.scheduledDay)?.timeInMillis ?: Long.MAX_VALUE }
+        .take(5)
+
+    val overdueList = tasks
+        .filter { !it.isDone && parseDate(it.scheduledDay)?.before(today) == true }
+        .sortedBy { parseDate(it.scheduledDay)?.timeInMillis ?: 0L }
+        .take(5)
+
+    val nextDue = upcomingList.firstOrNull()
+
+    // ---- streak (consecutive days with any completed task on its scheduled date) ----
+    fun completionStreakDays(): Int {
+        var streak = 0
+        var day = (today.clone() as Calendar)
+        while (true) {
+            val hadDone = tasks.any { it.isDone && parseDate(it.scheduledDay)?.let { d -> daysBetween(d, day) == 0 } == true }
+            if (hadDone) {
+                streak += 1
+                day.add(Calendar.DAY_OF_YEAR, -1)
+            } else break
+        }
+        return streak
+    }
+    val streakDays = completionStreakDays()
+
+    // quick actions
+    fun setDone(task: Task) {
+        val idx = tasks.indexOf(task)
+        if (idx >= 0) {
+            val newList = tasks.toMutableList()
+            newList[idx] = newList[idx].copy(isDone = true)
+            scope.launch { TaskPrefs.saveTasks(context, newList) }
+        }
+    }
+    fun removeTask(task: Task) {
+        val idx = tasks.indexOf(task)
+        if (idx >= 0) {
+            val newList = tasks.toMutableList()
+            newList.removeAt(idx)
+            scope.launch { TaskPrefs.saveTasks(context, newList) }
+        }
+    }
+
+    // ---- UI ----
+    val ringProgress by animateFloatAsState(targetValue = finishedPct / 100f, label = "progressAnim")
 
     Column(
         modifier = Modifier
             .fillMaxSize()
-            .padding(24.dp),
-        verticalArrangement = Arrangement.spacedBy(32.dp),
-        horizontalAlignment = Alignment.CenterHorizontally
+            .padding(horizontal = 24.dp, vertical = 16.dp),
+        verticalArrangement = Arrangement.spacedBy(20.dp)
     ) {
-        Text("📊 Dashboard", style = MaterialTheme.typography.headlineMedium)
+        // Header
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Text("📊 Dashboard", style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.SemiBold)
+        }
 
+        // Progress + KPI chips
         Row(
             modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.SpaceEvenly
+            horizontalArrangement = Arrangement.SpaceEvenly,
+            verticalAlignment = Alignment.CenterVertically
         ) {
-            DashboardCard("Pending", pendingPercent, Color(0xFFFFC107)) // amber
-            DashboardCard("Finished", finishedPercent, Color(0xFF4CAF50)) // green
-            DashboardCard("Past Deadline", pastDeadlinePercent, Color(0xFFF44336)) // red
+            ProgressRing(
+                progress = ringProgress,
+                label = "${finishedPct.toInt()}%",
+                caption = "Finished",
+                ringColor = Color(0xFF4CAF50)
+            )
+            StatChip(title = "Pending", value = "${pendingPct.toInt()}%", sub = "(${pending})")
+            StatChip(title = "Past Due", value = "${overduePct.toInt()}%", sub = "(${overdue})")
+        }
+
+        // KPI cards row
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(12.dp)
+        ) {
+            SectionCard(
+                title = "Total Tasks",
+                content = { Text("$total", style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold) },
+                modifier = Modifier.weight(1f)
+            )
+            SectionCard(
+                title = "Streak",
+                content = { Text("$streakDays day${if (streakDays == 1) "" else "s"}", style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold) },
+                modifier = Modifier.weight(1f)
+            )
+            SectionCard(
+                title = "Next Due",
+                content = { Text(nextDue?.scheduledDay?.let { fmt(it) } ?: "—", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Medium) },
+                modifier = Modifier.weight(1f)
+            )
+        }
+
+        // Overdue list
+        SectionCard(title = "Overdue") {
+            if (overdueList.isEmpty()) {
+                Text("No overdue tasks. 🎉", style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            } else {
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    overdueList.forEach { t ->
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Column(Modifier.weight(1f)) {
+                                Text(t.name, style = MaterialTheme.typography.bodyLarge, fontWeight = FontWeight.Medium, maxLines = 1)
+                                Text("${fmt(t.scheduledDay)} • ${t.category} • ${t.priority}", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                            }
+                            Row {
+                                IconButton(onClick = { setDone(t) }) { Icon(Icons.Default.Check, contentDescription = "Mark Done") }
+                                IconButton(onClick = { removeTask(t) }) { Icon(Icons.Default.Delete, contentDescription = "Remove") }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        // Upcoming list
+        SectionCard(title = "Upcoming") {
+            if (upcomingList.isEmpty()) {
+                Text("Nothing coming up.", style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            } else {
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    upcomingList.forEach { t ->
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Column(Modifier.weight(1f)) {
+                                Text(t.name, style = MaterialTheme.typography.bodyLarge, fontWeight = FontWeight.Medium, maxLines = 1)
+                                Text("${fmt(t.scheduledDay)} • ${t.category} • ${t.priority}", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                            }
+                            Row {
+                                IconButton(onClick = { setDone(t) }) { Icon(Icons.Default.Check, contentDescription = "Mark Done") }
+                                IconButton(onClick = { removeTask(t) }) { Icon(Icons.Default.Delete, contentDescription = "Remove") }
+                            }
+                        }
+                    }
+                }
+            }
         }
     }
 }
 
 @Composable
-fun DashboardCard(title: String, percent: Int, color: Color) {
-    Column(
-        modifier = Modifier
-            .width(100.dp)
-            .padding(8.dp),
-        horizontalAlignment = Alignment.CenterHorizontally
-    ) {
-        // Circular progress bar
-        CircularProgressIndicator(
-            progress = percent / 100f,
-            strokeWidth = 8.dp,
-            color = color,
-            modifier = Modifier.size(80.dp)
-        )
-        Spacer(modifier = Modifier.height(8.dp))
-        Text("$percent%", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
-        Text(title, style = MaterialTheme.typography.bodyMedium, maxLines = 1)
+private fun ProgressRing(
+    progress: Float,
+    label: String,
+    caption: String,
+    ringColor: Color
+) {
+    Column(horizontalAlignment = Alignment.CenterHorizontally) {
+        Box(contentAlignment = Alignment.Center) {
+            CircularProgressIndicator(
+                progress = progress.coerceIn(0f, 1f),
+                strokeWidth = 10.dp,
+                modifier = Modifier.size(110.dp),
+                color = ringColor,
+            )
+        }
+        Spacer(Modifier.height(8.dp))
+        Text(label, style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
+        Text(caption, style = MaterialTheme.typography.bodyMedium)
     }
 }
 
+@Composable
+private fun StatChip(title: String, value: String, sub: String) {
+    ElevatedCard(
+        shape = RoundedCornerShape(16.dp),
+        elevation = CardDefaults.elevatedCardElevation(defaultElevation = 2.dp)
+    ) {
+        Column(
+            modifier = Modifier
+                .widthIn(min = 110.dp)
+                .padding(horizontal = 14.dp, vertical = 10.dp),
+            horizontalAlignment = Alignment.Start
+        ) {
+            Text(value, style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.SemiBold)
+            Text(title, style = MaterialTheme.typography.labelLarge)
+            Text(sub, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        }
+    }
+}
+
+@Composable
+private fun SectionCard(
+    title: String,
+    modifier: Modifier = Modifier,
+    content: @Composable () -> Unit
+) {
+    ElevatedCard(
+        modifier = modifier,
+        shape = RoundedCornerShape(16.dp),
+        elevation = CardDefaults.elevatedCardElevation(defaultElevation = 3.dp)
+    ) {
+        Column(modifier = Modifier.padding(16.dp)) {
+            Text(title, style = MaterialTheme.typography.titleMedium, color = MaterialTheme.colorScheme.primary)
+            Spacer(Modifier.height(8.dp))
+            content()
+        }
+    }
+}
