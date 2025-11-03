@@ -7,6 +7,7 @@ import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.map
 
 val Context.taskDataStore by preferencesDataStore(name = "tasks")
+
 private val TASKS_KEY = stringSetPreferencesKey("task_list")
 
 object TaskPrefs {
