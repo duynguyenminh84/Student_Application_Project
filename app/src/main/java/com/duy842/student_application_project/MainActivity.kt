@@ -709,7 +709,7 @@ fun WeeklyPlannerScreen(uid: Long) {
             modifier = Modifier.align(Alignment.End)
         ) { Text("Save") }
 
-        // Horizontal lanes: one column per weekday.
+        // Horizontal lanes: one column per weekday
         Row(
             modifier = Modifier
                 .fillMaxSize()
