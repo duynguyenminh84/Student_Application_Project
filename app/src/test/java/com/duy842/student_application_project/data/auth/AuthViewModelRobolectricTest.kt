@@ -75,6 +75,7 @@ class AuthViewModelRobolectricTest {
         assertTrue("Expected error message", !vm.error.value.isNullOrBlank())
     }
 
+
     @Test
     fun logout_resets_state() = runBlocking {
         val email = "a${System.currentTimeMillis()}@b.com"
