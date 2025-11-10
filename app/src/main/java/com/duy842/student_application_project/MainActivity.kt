@@ -29,6 +29,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.duy842.student_application_project.ui.auth.AuthViewModel
+import com.duy842.student_application_project.ui.auth.AuthViewModelFactory
 import com.duy842.student_application_project.ui.theme.Student_Application_ProjectTheme
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
@@ -43,8 +44,7 @@ import java.util.Calendar
  * • Binds to [AuthViewModel] for basic offline auth flow.
  *
  * Notes:
- * • `LaunchedEffect(Unit) { authVm.logout() }` forces a fresh login each launch
- *   for demo/testing; remove if you want auto-login.
+ * • Session is now persistent via DataStore (no auto-logout on launch).
  * • UI state is saved with [rememberSaveable] where relevant.
  */
 class MainActivity : ComponentActivity() {
@@ -54,13 +54,13 @@ class MainActivity : ComponentActivity() {
             Student_Application_ProjectTheme(dynamicColor = false) {
 
                 // ViewModel for lightweight offline authentication.
-                val authVm: AuthViewModel = viewModel()
+                val authVm: AuthViewModel = viewModel(factory = AuthViewModelFactory(application))
                 val isLoggedIn by authVm.isLoggedIn.collectAsState()
                 val error by authVm.error.collectAsState()
                 val uid by authVm.currentUserId.collectAsState() // current user id for per-user storage
 
-                // Demo choice: always require login on app launch.
-                LaunchedEffect(Unit) { authVm.logout() }
+                // Removed the forced logout on app start so the session persists:
+                // LaunchedEffect(Unit) { authVm.logout() }
 
                 if (!isLoggedIn) {
                     // -------- Authentication Screen (Login/Register) --------
@@ -121,9 +121,7 @@ class MainActivity : ComponentActivity() {
 
 /* ---------- Navigation ---------- */
 
-/**
- * Top-level destinations used by the bottom bar.
- */
+/** Top-level destinations used by the bottom bar. */
 enum class Screen { Home, TaskManager, WeeklyPlanner, Dashboard }
 
 /* ---------- Data models ---------- */
@@ -143,9 +141,7 @@ data class Task(
     val scheduledHour: Int? = null     // optional hour
 )
 
-/**
- * Optional block-based planner entities (kept for future expansion).
- */
+/** Optional block-based planner entities (kept for future expansion). */
 data class TimeBlock(val hour: Int, var task: String = "")
 data class DaySchedule(val day: String, val blocks: List<TimeBlock>)
 
@@ -583,9 +579,7 @@ fun TaskManagerScreen(uid: Long) {
     }
 }
 
-/**
- * Segmented chips for category selection.
- */
+/** Segmented chips for category selection. */
 @Composable
 fun CategorySelector(selected: String, onSelect: (String) -> Unit) {
     Column {
@@ -598,9 +592,7 @@ fun CategorySelector(selected: String, onSelect: (String) -> Unit) {
     }
 }
 
-/**
- * Segmented chips for priority selection.
- */
+/** Segmented chips for priority selection. */
 @Composable
 fun PrioritySelector(selected: String, onSelect: (String) -> Unit) {
     Column {
@@ -613,9 +605,7 @@ fun PrioritySelector(selected: String, onSelect: (String) -> Unit) {
     }
 }
 
-/**
- * Minimal dropdown used in Home filters.
- */
+/** Minimal dropdown used in Home filters. */
 @Composable
 fun FilterDropdown(label: String, options: List<String>, selected: String, onSelect: (String) -> Unit) {
     var expanded by remember { mutableStateOf(false) }
@@ -1044,9 +1034,7 @@ fun DashboardScreen(uid: Long) {
 
 // ---------- Dashboard UI helpers ----------
 
-/**
- * Circular progress ring + labels.
- */
+/** Circular progress ring + labels. */
 @Composable
 private fun ProgressRing(progress: Float, label: String, caption: String, ringColor: Color) {
     Column(horizontalAlignment = Alignment.CenterHorizontally) {
@@ -1064,9 +1052,7 @@ private fun ProgressRing(progress: Float, label: String, caption: String, ringCo
     }
 }
 
-/**
- * Small stat card used for secondary KPIs.
- */
+/** Small stat card used for secondary KPIs. */
 @Composable
 private fun StatChip(title: String, value: String, sub: String) {
     ElevatedCard(
@@ -1086,9 +1072,7 @@ private fun StatChip(title: String, value: String, sub: String) {
     }
 }
 
-/**
- * Generic elevated section card with a title and slot content.
- */
+/** Generic elevated section card with a title and slot content. */
 @Composable
 private fun SectionCard(
     title: String,

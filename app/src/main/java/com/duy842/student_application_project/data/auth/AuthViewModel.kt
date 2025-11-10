@@ -1,11 +1,9 @@
 package com.duy842.student_application_project.ui.auth
 
-import android.app.Application
-import androidx.lifecycle.AndroidViewModel
+import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
-import com.duy842.student_application_project.data.AppDatabase
-import com.duy842.student_application_project.data.auth.AuthPrefs
 import com.duy842.student_application_project.data.auth.AuthRepository
+import com.duy842.student_application_project.data.auth.AuthSessionStore
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
@@ -13,17 +11,22 @@ import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 
-class AuthViewModel(app: Application) : AndroidViewModel(app) {
-    private val db = AppDatabase.getInstance(app)
-    private val repo = AuthRepository(db.userDao())
+/**
+ * AuthViewModel — pure ViewModel with injected dependencies.
+ * We use SharingStarted.Eagerly so flows update even without an active collector (helps unit tests).
+ */
+class AuthViewModel(
+    private val repo: AuthRepository,
+    private val session: AuthSessionStore
+) : ViewModel() {
 
-    // observe current user id from prefs
-    val currentUserId: StateFlow<Long> = AuthPrefs.currentUserId(app).stateIn(
-        viewModelScope, SharingStarted.WhileSubscribed(5_000), -1L
-    )
-    val isLoggedIn: StateFlow<Boolean> = currentUserId.map { it > 0 }.stateIn(
-        viewModelScope, SharingStarted.WhileSubscribed(5_000), false
-    )
+    // Eagerly start collecting so tests don't need to subscribe explicitly
+    val currentUserId: StateFlow<Long> = session.currentUserId
+        .stateIn(viewModelScope, SharingStarted.Eagerly, -1L)
+
+    val isLoggedIn: StateFlow<Boolean> = currentUserId
+        .map { it > 0 }
+        .stateIn(viewModelScope, SharingStarted.Eagerly, false)
 
     private val _error = MutableStateFlow<String?>(null)
     val error: StateFlow<String?> = _error
@@ -32,9 +35,7 @@ class AuthViewModel(app: Application) : AndroidViewModel(app) {
         viewModelScope.launch {
             _error.value = null
             repo.login(email, password)
-                .onSuccess { user ->
-                    AuthPrefs.setCurrentUser(getApplication(), user.id)
-                }
+                .onSuccess { user -> session.setCurrentUser(user.id) }
                 .onFailure { e -> _error.value = e.message }
         }
     }
@@ -47,9 +48,7 @@ class AuthViewModel(app: Application) : AndroidViewModel(app) {
             }
             _error.value = null
             repo.register(email, password)
-                .onSuccess { id ->
-                    AuthPrefs.setCurrentUser(getApplication(), id)
-                }
+                .onSuccess { id -> session.setCurrentUser(id) }
                 .onFailure { e -> _error.value = e.message }
         }
     }
@@ -57,9 +56,7 @@ class AuthViewModel(app: Application) : AndroidViewModel(app) {
     fun logout() {
         viewModelScope.launch {
             _error.value = null
-            AuthPrefs.clear(getApplication())   // sets current user id to -1 (or null)
-            // No need to manually toggle isLoggedIn; it's derived from the flow.
+            session.clear()
         }
     }
-
 }

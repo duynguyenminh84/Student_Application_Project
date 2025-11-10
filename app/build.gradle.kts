@@ -108,6 +108,16 @@ dependencies {
     testImplementation("org.robolectric:robolectric:4.11.1")
     testImplementation("androidx.test:core:1.5.0") // for ApplicationProvider
 
+    // JUnit
+    testImplementation("junit:junit:4.13.2")
+
+// Coroutines test utilities (provides kotlinx.coroutines.test.* and Dispatchers.setMain)
+    testImplementation("org.jetbrains.kotlinx:kotlinx-coroutines-test:1.8.1")
+
+// (Optional) Turbine for Flow testing
+    testImplementation("app.cash.turbine:turbine:1.1.0")
+
+
 
 
 
