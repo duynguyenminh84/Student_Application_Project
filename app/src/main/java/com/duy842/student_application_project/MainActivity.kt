@@ -34,43 +34,68 @@ import com.duy842.student_application_project.ui.theme.Student_Application_Proje
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import java.util.Calendar
+import com.google.firebase.ktx.Firebase
+import com.google.firebase.firestore.ktx.firestore
+import kotlinx.coroutines.tasks.await
+import com.google.firebase.auth.ktx.auth
+
+
+
 
 /**
  * Main entry point activity.
- *
- * Responsibilities:
- * • Hosts the app's Compose content and theme.
- * • Orchestrates simple navigation across top-level screens via [Screen].
- * • Binds to [AuthViewModel] for basic offline auth flow.
- *
- * Notes:
- * • Session is now persistent via DataStore (no auto-logout on launch).
- * • UI state is saved with [rememberSaveable] where relevant.
  */
 class MainActivity : ComponentActivity() {
+
+    private var cloudInitForUid: Long? = null
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         setContent {
             Student_Application_ProjectTheme(dynamicColor = false) {
 
-                // ViewModel for lightweight offline authentication.
+                // Auth VM + state
                 val authVm: AuthViewModel = viewModel(factory = AuthViewModelFactory(application))
                 val isLoggedIn by authVm.isLoggedIn.collectAsState()
                 val error by authVm.error.collectAsState()
-                val uid by authVm.currentUserId.collectAsState() // current user id for per-user storage
+                val uid by authVm.currentUserId.collectAsState()
 
-                // Removed the forced logout on app start so the session persists:
-                // LaunchedEffect(Unit) { authVm.logout() }
+            // Compose-safe context for DataStore
+                val appCtx = LocalContext.current.applicationContext
+
+            // Sign in to Firebase (anonymous) once
+                LaunchedEffect(Unit) {
+                    try { Firebase.auth.signInAnonymously().await() } catch (_: Exception) {}
+                }
+
+            // Touch Firestore once after a successful login + seed local if empty
+                LaunchedEffect(isLoggedIn, uid) {
+                    if (isLoggedIn && uid > 0 && cloudInitForUid != uid) {
+                        cloudInitForUid = uid
+                        try {
+                            // seed local from cloud if empty
+                            val local = TaskPrefs.getTasks(appCtx, uid).first()
+                            if (local.isEmpty()) {
+                                val remote = CloudTasks.pullAll(uid) ?: emptyList()
+                                if (remote.isNotEmpty()) {
+                                    TaskPrefs.saveTasks(appCtx, uid, remote)
+                                }
+                            }
+                            // sanity ping (optional)
+                            helloFirestore(uid)
+                        } catch (_: Exception) { /* ignore for now */ }
+                    }
+                }
+
+
 
                 if (!isLoggedIn) {
-                    // -------- Authentication Screen (Login/Register) --------
                     LoginScreen(
                         onLogin = { email, pass -> authVm.login(email, pass) },
                         onRegister = { email, pass -> authVm.register(email, pass) },
                         error = error
                     )
                 } else {
-                    // -------- Main App Scaffolding with Bottom Navigation --------
                     var currentScreen by rememberSaveable { mutableStateOf(Screen.Home) }
 
                     Scaffold(
@@ -103,7 +128,6 @@ class MainActivity : ComponentActivity() {
                             }
                         }
                     ) { innerPadding ->
-                        // Screen switcher. Each screen is self-contained and uses the same user-scoped storage.
                         Box(modifier = Modifier.padding(innerPadding)) {
                             when (currentScreen) {
                                 Screen.Home          -> HomeScreen(uid = uid, onLogout = { authVm.logout() })
@@ -119,41 +143,25 @@ class MainActivity : ComponentActivity() {
     }
 }
 
-/* ---------- Navigation ---------- */
 
-/** Top-level destinations used by the bottom bar. */
+
+/* ---------- Navigation ---------- */
 enum class Screen { Home, TaskManager, WeeklyPlanner, Dashboard }
 
 /* ---------- Data models ---------- */
-
-/**
- * Basic task model used across screens.
- *
- * @param scheduledDay Date string in "yyyy-M-d" (e.g., "2025-11-03") or null for no date.
- * @param scheduledHour Optional hour-of-day; not all screens use it.
- */
 data class Task(
     val name: String,
     val category: String = "General",
     val priority: String = "Medium",
     val isDone: Boolean = false,
     val scheduledDay: String? = null,  // e.g. "2025-11-03"
-    val scheduledHour: Int? = null     // optional hour
+    val scheduledHour: Int? = null
 )
-
-/** Optional block-based planner entities (kept for future expansion). */
 data class TimeBlock(val hour: Int, var task: String = "")
 data class DaySchedule(val day: String, val blocks: List<TimeBlock>)
 
-/* ---------- Auth: Login screen (offline) ---------- */
 
-/**
- * Simple login/register form.
- *
- * @param onLogin Callback when user taps "Login".
- * @param onRegister Callback when user taps "Create Account".
- * @param error Optional auth error message to display.
- */
+/* ---------- Auth UI ---------- */
 @Composable
 fun LoginScreen(
     onLogin: (String, String) -> Unit,
@@ -192,41 +200,21 @@ fun LoginScreen(
 
         if (!error.isNullOrBlank()) {
             Spacer(Modifier.height(8.dp))
-            Text(
-                error,
-                color = MaterialTheme.colorScheme.error,
-                style = MaterialTheme.typography.labelMedium
-            )
+            Text(error, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.labelMedium)
         }
 
         Spacer(Modifier.height(16.dp))
 
-        Button(
-            onClick = { onLogin(email, password) },
-            modifier = Modifier.fillMaxWidth()
-        ) { Text("Login") }
-
-        TextButton(
-            onClick = { onRegister(email, password) },
-            modifier = Modifier.fillMaxWidth()
-        ) { Text("Create Account") }
+        Button(onClick = { onLogin(email, password) }, modifier = Modifier.fillMaxWidth()) {
+            Text("Login")
+        }
+        TextButton(onClick = { onRegister(email, password) }, modifier = Modifier.fillMaxWidth()) {
+            Text("Create Account")
+        }
     }
 }
 
 /* ---------- Home ---------- */
-
-/**
- * Home screen: shows task list with filters and quick editing.
- *
- * Data flow:
- * • Observes tasks for the given [uid] via `TaskPrefs.getTasks(...)`.
- * • Updates persist immediately on change using `TaskPrefs.saveTasks(...)`.
- *
- * UX:
- * • Filter by category/priority.
- * • Check off, edit, or delete tasks inline.
- * • Includes a "quote of the day" banner for motivation.
- */
 @Composable
 fun HomeScreen(
     uid: Long,
@@ -239,18 +227,15 @@ fun HomeScreen(
     var selectedCategory by remember { mutableStateOf("All") }
     var selectedPriority by remember { mutableStateOf("All") }
 
-    // Edit dialog state.
     var editingTaskIndex by remember { mutableStateOf(-1) }
     var editedPriority by remember { mutableStateOf("Medium") }
     var editedCategory by remember { mutableStateOf("Assignment") }
     var showEditDialog by remember { mutableStateOf(false) }
 
-    // Load tasks for this user whenever uid changes.
     LaunchedEffect(uid) {
         TaskPrefs.getTasks(context, uid).collect { loaded -> tasks = loaded }
     }
 
-    // Lightweight motivational content.
     val motivationalQuotes = listOf(
         "Dream big. Start small. But most of all, start. – Simon Sinek",
         "The way to get started is to quit talking and begin doing. – Walt Disney",
@@ -271,7 +256,6 @@ fun HomeScreen(
             .padding(horizontal = 24.dp, vertical = 16.dp),
         verticalArrangement = Arrangement.spacedBy(24.dp)
     ) {
-        // Header with logout.
         Row(
             modifier = Modifier.fillMaxWidth(),
             horizontalArrangement = Arrangement.SpaceBetween,
@@ -285,12 +269,9 @@ fun HomeScreen(
                 ),
                 color = MaterialTheme.colorScheme.primary
             )
-            TextButton(onClick = onLogout) {
-                Text("Log out")
-            }
+            TextButton(onClick = onLogout) { Text("Log out") }
         }
 
-        // Quote banner.
         val quoteOfTheDay = remember { motivationalQuotes.random() }
         Box(
             modifier = Modifier
@@ -308,12 +289,7 @@ fun HomeScreen(
                 .padding(20.dp)
         ) {
             Row(verticalAlignment = Alignment.CenterVertically) {
-                Icon(
-                    imageVector = Icons.Default.Star,
-                    contentDescription = "Motivation",
-                    tint = Color.White,
-                    modifier = Modifier.size(28.dp)
-                )
+                Icon(Icons.Default.Star, contentDescription = "Motivation", tint = Color.White, modifier = Modifier.size(28.dp))
                 Spacer(modifier = Modifier.width(12.dp))
                 Text(
                     text = quoteOfTheDay,
@@ -328,7 +304,6 @@ fun HomeScreen(
             }
         }
 
-        // Filter controls.
         ElevatedCard(modifier = Modifier.fillMaxWidth()) {
             Column(modifier = Modifier.padding(16.dp)) {
                 Text("Filter your tasks", style = MaterialTheme.typography.titleMedium)
@@ -348,13 +323,9 @@ fun HomeScreen(
             }
         }
 
-        // Task list with inline actions.
         ElevatedCard(modifier = Modifier.fillMaxWidth()) {
             Column(modifier = Modifier.padding(16.dp)) {
-                Text(
-                    "🎯 All Tasks",
-                    style = MaterialTheme.typography.headlineSmall.copy(fontWeight = FontWeight.SemiBold)
-                )
+                Text("🎯 All Tasks", style = MaterialTheme.typography.headlineSmall.copy(fontWeight = FontWeight.SemiBold))
                 Spacer(Modifier.height(8.dp))
 
                 val displayedTasks = tasks.filter { task ->
@@ -364,11 +335,7 @@ fun HomeScreen(
 
                 if (displayedTasks.isEmpty()) {
                     Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                        Icon(
-                            Icons.Default.Info,
-                            contentDescription = null,
-                            tint = MaterialTheme.colorScheme.outline
-                        )
+                        Icon(Icons.Default.Info, contentDescription = null, tint = MaterialTheme.colorScheme.outline)
                         Text("No tasks match your filters.", style = MaterialTheme.typography.bodyMedium)
                     }
                 } else {
@@ -380,9 +347,7 @@ fun HomeScreen(
                                 elevation = CardDefaults.elevatedCardElevation(defaultElevation = 4.dp)
                             ) {
                                 Column(
-                                    modifier = Modifier
-                                        .padding(16.dp)
-                                        .fillMaxWidth()
+                                    modifier = Modifier.padding(16.dp).fillMaxWidth()
                                 ) {
                                     Row(
                                         modifier = Modifier.fillMaxWidth(),
@@ -391,10 +356,7 @@ fun HomeScreen(
                                         Checkbox(
                                             checked = task.isDone,
                                             onCheckedChange = { isChecked ->
-                                                // Toggle completion and persist.
-                                                tasks = tasks.mapIndexed { i, t ->
-                                                    if (i == taskIndex) t.copy(isDone = isChecked) else t
-                                                }
+                                                tasks = tasks.mapIndexed { i, t -> if (i == taskIndex) t.copy(isDone = isChecked) else t }
                                                 scope.launch { TaskPrefs.saveTasks(context, uid, tasks) }
                                             }
                                         )
@@ -414,11 +376,7 @@ fun HomeScreen(
                                                     task.scheduledHour != null -> "🗓 Today at ${task.scheduledHour}:00"
                                                     else -> "🗓 No deadline"
                                                 }
-                                                Text(
-                                                    text = deadlineText,
-                                                    style = MaterialTheme.typography.labelSmall,
-                                                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                                                )
+                                                Text(deadlineText, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                                             }
                                         }
                                     }
@@ -430,7 +388,6 @@ fun HomeScreen(
                                         horizontalArrangement = Arrangement.End,
                                         verticalAlignment = Alignment.CenterVertically
                                     ) {
-                                        // Edit -> opens modal with category/priority selectors.
                                         IconButton(onClick = {
                                             editingTaskIndex = taskIndex
                                             editedPriority = task.priority
@@ -438,7 +395,6 @@ fun HomeScreen(
                                             showEditDialog = true
                                         }) { Icon(Icons.Default.Edit, contentDescription = "Edit Task") }
 
-                                        // Delete/Remove actions (duplicated UX intentionally).
                                         IconButton(onClick = {
                                             tasks = tasks.filterIndexed { i, _ -> i != taskIndex }
                                             scope.launch { TaskPrefs.saveTasks(context, uid, tasks) }
@@ -458,18 +414,13 @@ fun HomeScreen(
         }
     }
 
-    // Edit modal for category/priority only (keeps UX predictable).
     if (showEditDialog && editingTaskIndex != -1) {
         AlertDialog(
             onDismissRequest = { showEditDialog = false },
             confirmButton = {
                 TextButton(onClick = {
-                    // Persist category/priority edits.
                     tasks = tasks.mapIndexed { i, t ->
-                        if (i == editingTaskIndex) t.copy(
-                            priority = editedPriority,
-                            category = editedCategory
-                        ) else t
+                        if (i == editingTaskIndex) t.copy(priority = editedPriority, category = editedCategory) else t
                     }
                     scope.launch { TaskPrefs.saveTasks(context, uid, tasks) }
                     showEditDialog = false
@@ -501,14 +452,6 @@ fun HomeScreen(
 }
 
 /* ---------- Task Manager ---------- */
-
-/**
- * Task creation screen.
- *
- * Flow:
- * • Inputs: name, category, priority, optional date (via [DatePickerDialog]).
- * • On "Add": Appends to user-scoped list and persists via [TaskPrefs].
- */
 @Composable
 fun TaskManagerScreen(uid: Long) {
     val context = LocalContext.current
@@ -521,7 +464,6 @@ fun TaskManagerScreen(uid: Long) {
 
     val scrollState = rememberScrollState()
 
-    // System date picker delegates to our state.
     val calendar = Calendar.getInstance()
     val datePickerDialog = DatePickerDialog(
         context,
@@ -548,7 +490,6 @@ fun TaskManagerScreen(uid: Long) {
             keyboardOptions = KeyboardOptions.Default.copy(imeAction = ImeAction.Done)
         )
 
-        // Category and priority selectors.
         CategorySelector(selectedCategory) { selectedCategory = it }
         PrioritySelector(selectedPriority) { selectedPriority = it }
 
@@ -556,7 +497,6 @@ fun TaskManagerScreen(uid: Long) {
             Text(text = selectedDate?.let { "🗓 Deadline: $it" } ?: "Select Deadline")
         }
 
-        // Persist and reset input state.
         Button(
             onClick = {
                 if (taskName.isNotBlank()) {
@@ -579,7 +519,6 @@ fun TaskManagerScreen(uid: Long) {
     }
 }
 
-/** Segmented chips for category selection. */
 @Composable
 fun CategorySelector(selected: String, onSelect: (String) -> Unit) {
     Column {
@@ -592,7 +531,6 @@ fun CategorySelector(selected: String, onSelect: (String) -> Unit) {
     }
 }
 
-/** Segmented chips for priority selection. */
 @Composable
 fun PrioritySelector(selected: String, onSelect: (String) -> Unit) {
     Column {
@@ -605,7 +543,6 @@ fun PrioritySelector(selected: String, onSelect: (String) -> Unit) {
     }
 }
 
-/** Minimal dropdown used in Home filters. */
 @Composable
 fun FilterDropdown(label: String, options: List<String>, selected: String, onSelect: (String) -> Unit) {
     var expanded by remember { mutableStateOf(false) }
@@ -617,10 +554,7 @@ fun FilterDropdown(label: String, options: List<String>, selected: String, onSel
                 options.forEach {
                     DropdownMenuItem(
                         text = { Text(it) },
-                        onClick = {
-                            onSelect(it)
-                            expanded = false
-                        }
+                        onClick = { onSelect(it); expanded = false }
                     )
                 }
             }
@@ -629,36 +563,21 @@ fun FilterDropdown(label: String, options: List<String>, selected: String, onSel
 }
 
 /* ---------- Weekly Planner ---------- */
-
-/**
- * Weekly planner view grouped by day-of-week.
- *
- * Behavior:
- * • Groups tasks by computed weekday from `scheduledDay` (yyyy-M-d).
- * • Supports inline delete and editing category/priority per task.
- * • "Save" persists the whole edited list.
- */
 @Composable
 fun WeeklyPlannerScreen(uid: Long) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
 
-    // Base source of truth from storage.
     val savedTasks by TaskPrefs.getTasks(context, uid).collectAsState(initial = emptyList())
-
-    // Local editable copy to allow batch operations before persisting.
     var editableTasks by remember { mutableStateOf(savedTasks.toMutableList()) }
     LaunchedEffect(savedTasks) { editableTasks = savedTasks.toMutableList() }
 
-    fun persist(list: List<Task>) {
-        scope.launch { TaskPrefs.saveTasks(context, uid, list) }
-    }
+    fun persist(list: List<Task>) { scope.launch { TaskPrefs.saveTasks(context, uid, list) } }
 
     val daysOfWeek = listOf("Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun")
     val horizontalScroll = rememberScrollState()
     var editingIndex by remember { mutableStateOf<Int?>(null) }
 
-    // Utility: parse weekday label from yyyy-M-d.
     fun getDayOfWeek(dateStr: String?): String? {
         if (dateStr.isNullOrBlank()) return null
         return try {
@@ -677,7 +596,6 @@ fun WeeklyPlannerScreen(uid: Long) {
         } catch (_: Exception) { null }
     }
 
-    // Utility: pretty date for display.
     fun prettyDate(dateStr: String?): String {
         if (dateStr.isNullOrBlank()) return "No date"
         return try {
@@ -689,22 +607,14 @@ fun WeeklyPlannerScreen(uid: Long) {
     }
 
     Column(
-        modifier = Modifier
-            .fillMaxSize()
-            .padding(8.dp)
+        modifier = Modifier.fillMaxSize().padding(8.dp)
     ) {
-        // Explicit save button for edits.
-        Button(
-            onClick = { persist(editableTasks) },
-            modifier = Modifier.align(Alignment.End)
-        ) { Text("Save") }
+        Button(onClick = { persist(editableTasks) }, modifier = Modifier.align(Alignment.End)) {
+            Text("Save")
+        }
 
-        // Horizontal lanes: one column per weekday
         Row(
-            modifier = Modifier
-                .fillMaxSize()
-                .horizontalScroll(horizontalScroll)
-                .padding(top = 8.dp),
+            modifier = Modifier.fillMaxSize().horizontalScroll(horizontalScroll).padding(top = 8.dp),
             horizontalArrangement = Arrangement.spacedBy(8.dp)
         ) {
             daysOfWeek.forEach { day ->
@@ -725,7 +635,6 @@ fun WeeklyPlannerScreen(uid: Long) {
                     )
                     Spacer(modifier = Modifier.height(8.dp))
 
-                    // Map each task to its global index; filter those matching this weekday.
                     val indicesForDay = editableTasks.mapIndexedNotNull { idx, t ->
                         if (getDayOfWeek(t.scheduledDay) == day) idx else null
                     }
@@ -736,19 +645,13 @@ fun WeeklyPlannerScreen(uid: Long) {
                         indicesForDay.forEach { globalIdx ->
                             val task = editableTasks[globalIdx]
                             Row(
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .padding(vertical = 4.dp),
+                                modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp),
                                 verticalAlignment = Alignment.CenterVertically,
                                 horizontalArrangement = Arrangement.SpaceBetween
                             ) {
                                 Column(Modifier.weight(1f)) {
                                     Text(task.name, style = MaterialTheme.typography.bodyMedium, maxLines = 1)
-                                    Text(
-                                        prettyDate(task.scheduledDay),
-                                        style = MaterialTheme.typography.labelSmall,
-                                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                                    )
+                                    Text(prettyDate(task.scheduledDay), style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                                     Text("${task.category} | ${task.priority}", style = MaterialTheme.typography.labelSmall)
                                 }
                                 Row {
@@ -756,7 +659,6 @@ fun WeeklyPlannerScreen(uid: Long) {
                                         Icon(Icons.Default.Edit, contentDescription = "Edit Task")
                                     }
                                     IconButton(onClick = {
-                                        // Remove immediately and persist.
                                         editableTasks.removeAt(globalIdx)
                                         persist(editableTasks)
                                     }) {
@@ -771,7 +673,6 @@ fun WeeklyPlannerScreen(uid: Long) {
         }
     }
 
-    // Editor dialog for the currently selected item (category/priority fields only).
     editingIndex?.let { idx ->
         if (idx in 0 until editableTasks.size) {
             val task = editableTasks[idx]
@@ -790,7 +691,6 @@ fun WeeklyPlannerScreen(uid: Long) {
                                 Text(option)
                             }
                         }
-
                         Text("Priority", style = MaterialTheme.typography.labelMedium)
                         listOf("High", "Medium", "Low").forEach { option ->
                             Row(verticalAlignment = Alignment.CenterVertically) {
@@ -813,29 +713,18 @@ fun WeeklyPlannerScreen(uid: Long) {
                 dismissButton = { TextButton(onClick = { editingIndex = null }) { Text("Cancel") } }
             )
         } else {
-            // Index became invalid due to concurrent list mutation; clear selection safely.
             editingIndex = null
         }
     }
 }
 
 /* ---------- Dashboard ---------- */
-
-/**
- * Dashboard aggregates progress metrics and task lists.
- *
- * KPIs:
- * • Finished / Pending / Past Due percentages.
- * • Total tasks, completion streak, next due date.
- * • Overdue and Upcoming lists with quick actions.
- */
 @Composable
 fun DashboardScreen(uid: Long) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
     val tasks by TaskPrefs.getTasks(context, uid).collectAsState(initial = emptyList())
 
-    // Helper actions mutate persisted list atomically.
     fun setDone(task: Task) {
         val idx = tasks.indexOf(task)
         if (idx >= 0) {
@@ -853,11 +742,10 @@ fun DashboardScreen(uid: Long) {
         }
     }
 
-    // Date utilities for yyyy-M-d.
     fun parseDate(dateStr: String?): Calendar? {
         if (dateStr.isNullOrBlank()) return null
         return try {
-            val parts = dateStr.split("-").map { it.toInt() } // yyyy-M-d
+            val parts = dateStr.split("-").map { it.toInt() }
             Calendar.getInstance().apply {
                 set(parts[0], parts[1] - 1, parts[2], 0, 0, 0)
                 set(Calendar.MILLISECOND, 0)
@@ -880,12 +768,10 @@ fun DashboardScreen(uid: Long) {
         return (diff / (24*60*60*1000L)).toInt()
     }
 
-    // Normalize today to midnight for date comparisons.
     val today = Calendar.getInstance().apply {
         set(Calendar.HOUR_OF_DAY, 0); set(Calendar.MINUTE, 0); set(Calendar.SECOND, 0); set(Calendar.MILLISECOND, 0)
     }
 
-    // Aggregate stats.
     val total = tasks.size.coerceAtLeast(1)
     val finished = tasks.count { it.isDone }
     val overdue = tasks.count { !it.isDone && (parseDate(it.scheduledDay)?.before(today) == true) }
@@ -896,12 +782,10 @@ fun DashboardScreen(uid: Long) {
         }
     }
 
-    // Percentages with simple guards.
     val finishedPct = (finished * 100f / total)
     val pendingPct = (pending * 100f / total)
     val overduePct = (overdue * 100f / total)
 
-    // Top-5 lists.
     val upcomingList = tasks
         .filter { !it.isDone && parseDate(it.scheduledDay)?.after(today) == true }
         .sortedBy { parseDate(it.scheduledDay)?.timeInMillis ?: Long.MAX_VALUE }
@@ -912,10 +796,7 @@ fun DashboardScreen(uid: Long) {
         .sortedBy { parseDate(it.scheduledDay)?.timeInMillis ?: 0L }
         .take(5)
 
-    // Next nearest upcoming task (nullable).
     val nextDue = upcomingList.firstOrNull()
-
-    // Compute consecutive-day completion streak counting backward from today.
     fun completionStreakDays(): Int {
         var streak = 0
         var day = (today.clone() as Calendar)
@@ -927,58 +808,38 @@ fun DashboardScreen(uid: Long) {
     }
     val streakDays = completionStreakDays()
 
-    // Animated progress for the main ring indicator.
     val ringProgress by animateFloatAsState(targetValue = finishedPct / 100f, label = "progressAnim")
 
     Column(
-        modifier = Modifier
-            .fillMaxSize()
-            .padding(horizontal = 24.dp, vertical = 16.dp),
+        modifier = Modifier.fillMaxSize().padding(horizontal = 24.dp, vertical = 16.dp),
         verticalArrangement = Arrangement.spacedBy(20.dp)
     ) {
         Row(verticalAlignment = Alignment.CenterVertically) {
             Text("📊 Dashboard", style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.SemiBold)
         }
 
-        // KPI row: main ring + chips.
         Row(
             modifier = Modifier.fillMaxWidth(),
             horizontalArrangement = Arrangement.SpaceEvenly,
             verticalAlignment = Alignment.CenterVertically
         ) {
-            ProgressRing(
-                progress = ringProgress,
-                label = "${finishedPct.toInt()}%",
-                caption = "Finished",
-                ringColor = Color(0xFF4CAF50)
-            )
+            ProgressRing(progress = ringProgress, label = "${finishedPct.toInt()}%", caption = "Finished", ringColor = Color(0xFF4CAF50))
             StatChip(title = "Pending", value = "${pendingPct.toInt()}%", sub = "($pending)")
             StatChip(title = "Past Due", value = "${overduePct.toInt()}%", sub = "($overdue)")
         }
 
-        // Summary cards: total/streak/next due.
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.spacedBy(12.dp)
-        ) {
-            SectionCard(
-                title = "Total Tasks",
-                content = { Text("$total", style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold) },
-                modifier = Modifier.weight(1f)
-            )
-            SectionCard(
-                title = "Streak",
-                content = { Text("$streakDays day${if (streakDays == 1) "" else "s"}", style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold) },
-                modifier = Modifier.weight(1f)
-            )
-            SectionCard(
-                title = "Next Due",
-                content = { Text(nextDue?.scheduledDay?.let { fmt(it) } ?: "—", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Medium) },
-                modifier = Modifier.weight(1f)
-            )
+        Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+            SectionCard(title = "Total Tasks", modifier = Modifier.weight(1f)) {
+                Text("$total", style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold)
+            }
+            SectionCard(title = "Streak", modifier = Modifier.weight(1f)) {
+                Text("$streakDays day${if (streakDays == 1) "" else "s"}", style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold)
+            }
+            SectionCard(title = "Next Due", modifier = Modifier.weight(1f)) {
+                Text(nextDue?.scheduledDay?.let { fmt(it) } ?: "—", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Medium)
+            }
         }
 
-        // Overdue list with quick actions.
         SectionCard(title = "Overdue") {
             if (overdueList.isEmpty()) {
                 Text("No overdue tasks. 🎉", style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
@@ -1004,7 +865,6 @@ fun DashboardScreen(uid: Long) {
             }
         }
 
-        // Upcoming list with quick actions.
         SectionCard(title = "Upcoming") {
             if (upcomingList.isEmpty()) {
                 Text("Nothing coming up.", style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
@@ -1032,9 +892,7 @@ fun DashboardScreen(uid: Long) {
     }
 }
 
-// ---------- Dashboard UI helpers ----------
-
-/** Circular progress ring + labels. */
+/* ---------- Dashboard UI helpers ---------- */
 @Composable
 private fun ProgressRing(progress: Float, label: String, caption: String, ringColor: Color) {
     Column(horizontalAlignment = Alignment.CenterHorizontally) {
@@ -1052,7 +910,6 @@ private fun ProgressRing(progress: Float, label: String, caption: String, ringCo
     }
 }
 
-/** Small stat card used for secondary KPIs. */
 @Composable
 private fun StatChip(title: String, value: String, sub: String) {
     ElevatedCard(
@@ -1060,9 +917,7 @@ private fun StatChip(title: String, value: String, sub: String) {
         elevation = CardDefaults.elevatedCardElevation(defaultElevation = 2.dp)
     ) {
         Column(
-            modifier = Modifier
-                .widthIn(min = 110.dp)
-                .padding(horizontal = 14.dp, vertical = 10.dp),
+            modifier = Modifier.widthIn(min = 110.dp).padding(horizontal = 14.dp, vertical = 10.dp),
             horizontalAlignment = Alignment.Start
         ) {
             Text(value, style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.SemiBold)
@@ -1072,7 +927,6 @@ private fun StatChip(title: String, value: String, sub: String) {
     }
 }
 
-/** Generic elevated section card with a title and slot content. */
 @Composable
 private fun SectionCard(
     title: String,
@@ -1090,4 +944,12 @@ private fun SectionCard(
             content()
         }
     }
+}
+
+/* ---------- Firestore hello ---------- */
+private suspend fun helloFirestore(uid: Long) {
+    val db = Firebase.firestore
+    val doc = db.collection("users").document(uid.toString())
+        .collection("meta").document("hello")
+    doc.set(mapOf("message" to "Hi from the app!", "ts" to System.currentTimeMillis())).await()
 }
