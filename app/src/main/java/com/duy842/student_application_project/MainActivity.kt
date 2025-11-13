@@ -1,6 +1,8 @@
 package com.duy842.student_application_project
 
+import android.R.attr.onClick
 import android.app.DatePickerDialog
+import android.media.MediaPlayer
 import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
@@ -512,7 +514,7 @@ fun TaskManagerScreen(uid: Long) {
         OutlinedButton(onClick = { datePickerDialog.show() }, modifier = Modifier.fillMaxWidth()) {
             Text(text = selectedDate?.let { "🗓 Deadline: $it" } ?: "Select Deadline")
         }
-
+        val marimbaSong = MediaPlayer.create(context, R.raw.marimba)
         // Append new task to user’s list and persist; clears inputs on success
         Button(
             onClick = {
@@ -528,8 +530,8 @@ fun TaskManagerScreen(uid: Long) {
                         TaskPrefs.saveTasks(context, uid, current + newTask)
                         taskName = ""
                         selectedDate = null
-                    }
-                }
+                        marimbaSong.start()
+                }               }
             },
             modifier = Modifier.fillMaxWidth()
         ) { Text("Add Task to Home") }
