@@ -14,7 +14,7 @@ private val Context.taskStore by preferencesDataStore("tasks_prefs")
 
 object TaskPrefs {
 
-    // one key per user
+    // one key per user (local-only, still numeric uid-based)
     private fun keyFor(userId: Long) = stringPreferencesKey("tasks_user_$userId")
 
     /** Stream tasks for a specific user as Flow<List<Task>>. */
@@ -28,6 +28,10 @@ object TaskPrefs {
      * Save tasks for a specific user:
      * 1) write to local DataStore
      * 2) best-effort mirror to Firestore (won’t crash UI if it fails)
+     *
+     * Note: For now we mirror using a string cloud key derived from the uid.
+     * In the next step (MainActivity + CloudTasks changes), we’ll resolve this
+     * to the user’s email and write under users/{email}/tasks.
      */
     suspend fun saveTasks(ctx: Context, userId: Long, tasks: List<Task>) {
         val json = encodeTasks(tasks)
@@ -35,9 +39,11 @@ object TaskPrefs {
 
         // Mirror to Firestore (optional; safe to ignore failures)
         try {
-            CloudTasks.pushAll(userId, tasks)
+            // Temporary: use uid as cloud key; will switch to email-based key after we update CloudTasks/MainActivity
+            val cloudKey = userId.toString()
+            CloudTasks.pushAll(cloudKey, tasks)
         } catch (_: Exception) {
-            // You could log this if you want; we intentionally don't throw.
+            // Intentionally ignored (offline-first). You can log if needed.
         }
     }
 

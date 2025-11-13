@@ -1,6 +1,5 @@
 package com.duy842.student_application_project
 
-import android.R.attr.onClick
 import android.app.DatePickerDialog
 import android.media.MediaPlayer
 import android.os.Bundle
@@ -41,72 +40,141 @@ import com.google.firebase.firestore.ktx.firestore
 import kotlinx.coroutines.tasks.await
 import com.google.firebase.auth.ktx.auth
 
-// --- App entry and UI screens for a simple task manager with local DataStore persistence
-// --- Firebase is used only for: (1) anonymous sign-in, (2) a “hello” write to Firestore,
-// --- and (3) optional one-time seeding of local tasks from cloud on first login.
+// ====== NEW: tiny Room mirror so tasks appear in App Inspection ======
+import androidx.room.*
 
-/**
- * Main entry point activity.
- */
+@Entity(tableName = "tasks_debug")
+data class TaskRow(
+    @PrimaryKey(autoGenerate = true) val id: Long = 0,
+    val uid: Long,
+    val name: String,
+    val category: String,
+    val priority: String,
+    val isDone: Boolean,
+    val scheduledDay: String?,
+    val scheduledHour: Int?
+)
+
+@Dao
+interface TaskRowDao {
+    @Query("DELETE FROM tasks_debug WHERE uid = :uid")
+    suspend fun deleteForUid(uid: Long)
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun insertAll(rows: List<TaskRow>)
+}
+
+@Database(entities = [TaskRow::class], version = 1, exportSchema = false)
+abstract class DebugTasksDb : RoomDatabase() {
+    abstract fun dao(): TaskRowDao
+}
+
+object DebugTasksMirror {
+    @Volatile private var _db: DebugTasksDb? = null
+
+    private fun db(ctx: android.content.Context): DebugTasksDb {
+        return _db ?: androidx.room.Room.databaseBuilder(
+            ctx.applicationContext,
+            DebugTasksDb::class.java,
+            "debug_tasks.db"
+        ).fallbackToDestructiveMigration().build().also { _db = it }
+    }
+
+    suspend fun replaceForUid(ctx: android.content.Context, uid: Long, tasks: List<Task>) {
+        val dao = db(ctx).dao()
+        dao.deleteForUid(uid)
+        if (tasks.isNotEmpty()) {
+            val rows = tasks.map {
+                TaskRow(
+                    uid = uid,
+                    name = it.name,
+                    category = it.category,
+                    priority = it.priority,
+                    isDone = it.isDone,
+                    scheduledDay = it.scheduledDay,
+                    scheduledHour = it.scheduledHour
+                )
+            }
+            dao.insertAll(rows)
+        }
+    }
+}
+
+/** Collects DataStore tasks for a uid and mirrors them into Room (for App Inspection). */
+@Composable
+private fun TaskMirrorEffect(uid: Long) {
+    val ctx = LocalContext.current
+    LaunchedEffect(uid) {
+        if (uid > 0) {
+            TaskPrefs.getTasks(ctx, uid).collect { list ->
+                // keep Room table in sync with DataStore
+                DebugTasksMirror.replaceForUid(ctx, uid, list)
+            }
+        }
+    }
+}
+// ====== END Room mirror ======
+
+
+// App entry & screens for the task manager.
+// Firebase is used only to: (1) sign in anonymously (so Firestore works),
+// (2) one-time seeding of local tasks from cloud after login if empty,
+// (3) a tiny "hello" write to ensure Firestore connectivity.
+
 class MainActivity : ComponentActivity() {
 
-    // Ensures we only run cloud init once per unique signed-in user
+    // Prevents double-running the cloud init for the same user
     private var cloudInitForUid: Long? = null
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         setContent {
-            // Root Compose host; provides theme + all navigation and screen content
             Student_Application_ProjectTheme(dynamicColor = false) {
 
-                // Lightweight offline auth state (email/password handled by AuthViewModel)
-                // Auth VM + state
+                // --- Auth state (offline AuthViewModel) ---
                 val authVm: AuthViewModel = viewModel(factory = AuthViewModelFactory(application))
                 val isLoggedIn by authVm.isLoggedIn.collectAsState()
                 val error by authVm.error.collectAsState()
                 val uid by authVm.currentUserId.collectAsState()
 
-                // Compose-safe application Context for DataStore reads/writes
-                // Compose-safe context for DataStore
+                // Compose-safe app context for DataStore calls
                 val appCtx = LocalContext.current.applicationContext
 
-                // One-time anonymous Firebase Auth to enable Firestore access (no UI)
-                // Sign in to Firebase (anonymous) once
+                // --- Sign in to Firebase anonymously once (required for Firestore) ---
                 LaunchedEffect(Unit) {
                     try { Firebase.auth.signInAnonymously().await() } catch (_: Exception) {}
                 }
 
-                // After a successful local login, seed local tasks once per uid if empty,
-                // then do a tiny Firestore "hello" write to verify connectivity.
-                // Touch Firestore once after a successful login + seed local if empty
+                // --- After local login: seed local tasks once if empty + ping Firestore ---
                 LaunchedEffect(isLoggedIn, uid) {
                     if (isLoggedIn && uid > 0 && cloudInitForUid != uid) {
                         cloudInitForUid = uid
                         try {
-                            // seed local from cloud if empty
+                            val cloudKey = uid.toString()
                             val local = TaskPrefs.getTasks(appCtx, uid).first()
                             if (local.isEmpty()) {
-                                val remote = CloudTasks.pullAll(uid) ?: emptyList()
+                                val remote = CloudTasks.pullAll(cloudKey) ?: emptyList()
                                 if (remote.isNotEmpty()) {
                                     TaskPrefs.saveTasks(appCtx, uid, remote)
                                 }
                             }
-                            // sanity ping (optional)
                             helloFirestore(uid)
-                        } catch (_: Exception) { /* ignore for now */ }
+                        } catch (_: Exception) {
+                            // offline-first: ignore errors here
+                        }
                     }
                 }
 
-                // Simple navigation shell: unauth → LoginScreen, auth → bottom-bar app
                 if (!isLoggedIn) {
-                    // Minimal auth UI: email/password fields + login/register triggers;
-                    // error string (if any) is shown inline.
                     LoginScreen(
                         onLogin = { email, pass -> authVm.login(email, pass) },
                         onRegister = { email, pass -> authVm.register(email, pass) },
                         error = error
                     )
                 } else {
+                    // >>> NEW: start the mirror once logged in
+                    TaskMirrorEffect(uid = uid)
+
                     var currentScreen by rememberSaveable { mutableStateOf(Screen.Home) }
 
                     Scaffold(
@@ -232,21 +300,19 @@ fun HomeScreen(
     val scope = rememberCoroutineScope()
     var tasks by remember { mutableStateOf(listOf<Task>()) }
 
-    // Local UI state for filter + inline edit dialog (category/priority only)
+    // Filters + edit dialog state
     var selectedCategory by remember { mutableStateOf("All") }
     var selectedPriority by remember { mutableStateOf("All") }
-
     var editingTaskIndex by remember { mutableStateOf(-1) }
     var editedPriority by remember { mutableStateOf("Medium") }
     var editedCategory by remember { mutableStateOf("Assignment") }
     var showEditDialog by remember { mutableStateOf(false) }
 
-    // Observe per-user tasks from DataStore; updates in real time
+    // Observe per-user tasks from DataStore
     LaunchedEffect(uid) {
         TaskPrefs.getTasks(context, uid).collect { loaded -> tasks = loaded }
     }
 
-    // Short rotating motivational quotes (purely cosmetic)
     val motivationalQuotes = listOf(
         "Dream big. Start small. But most of all, start. – Simon Sinek",
         "The way to get started is to quit talking and begin doing. – Walt Disney",
@@ -257,7 +323,6 @@ fun HomeScreen(
         "Vision without execution is hallucination. – Thomas Edison",
         "When everything seems to be going against you, remember that the airplane takes off against the wind. – Henry Ford"
     )
-
     val scrollState = rememberScrollState()
 
     Column(
@@ -315,7 +380,7 @@ fun HomeScreen(
             }
         }
 
-        // Simple in-memory filters; persistence unaffected
+        // Filters
         ElevatedCard(modifier = Modifier.fillMaxWidth()) {
             Column(modifier = Modifier.padding(16.dp)) {
                 Text("Filter your tasks", style = MaterialTheme.typography.titleMedium)
@@ -335,6 +400,7 @@ fun HomeScreen(
             }
         }
 
+        // Task list
         ElevatedCard(modifier = Modifier.fillMaxWidth()) {
             Column(modifier = Modifier.padding(16.dp)) {
                 Text("🎯 All Tasks", style = MaterialTheme.typography.headlineSmall.copy(fontWeight = FontWeight.SemiBold))
@@ -359,13 +425,14 @@ fun HomeScreen(
                                 elevation = CardDefaults.elevatedCardElevation(defaultElevation = 4.dp)
                             ) {
                                 Column(
-                                    modifier = Modifier.padding(16.dp).fillMaxWidth()
+                                    modifier = Modifier
+                                        .padding(16.dp)
+                                        .fillMaxWidth()
                                 ) {
                                     Row(
                                         modifier = Modifier.fillMaxWidth(),
                                         verticalAlignment = Alignment.CenterVertically
                                     ) {
-                                        // Toggle completion state and persist to DataStore immediately
                                         Checkbox(
                                             checked = task.isDone,
                                             onCheckedChange = { isChecked ->
@@ -389,7 +456,11 @@ fun HomeScreen(
                                                     task.scheduledHour != null -> "🗓 Today at ${task.scheduledHour}:00"
                                                     else -> "🗓 No deadline"
                                                 }
-                                                Text(deadlineText, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                                Text(
+                                                    deadlineText,
+                                                    style = MaterialTheme.typography.labelSmall,
+                                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                                )
                                             }
                                         }
                                     }
@@ -401,7 +472,6 @@ fun HomeScreen(
                                         horizontalArrangement = Arrangement.End,
                                         verticalAlignment = Alignment.CenterVertically
                                     ) {
-                                        // Inline edit (category/priority only) via dialog
                                         IconButton(onClick = {
                                             editingTaskIndex = taskIndex
                                             editedPriority = task.priority
@@ -409,7 +479,6 @@ fun HomeScreen(
                                             showEditDialog = true
                                         }) { Icon(Icons.Default.Edit, contentDescription = "Edit Task") }
 
-                                        // Remove from list and persist
                                         IconButton(onClick = {
                                             tasks = tasks.filterIndexed { i, _ -> i != taskIndex }
                                             scope.launch { TaskPrefs.saveTasks(context, uid, tasks) }
@@ -429,8 +498,10 @@ fun HomeScreen(
         }
     }
 
-    // Apply category/priority edits to the selected task and persist
+    // Edit dialog (category/priority only)
     if (showEditDialog && editingTaskIndex != -1) {
+        val scope = rememberCoroutineScope()
+        val context = LocalContext.current
         AlertDialog(
             onDismissRequest = { showEditDialog = false },
             confirmButton = {
@@ -480,7 +551,6 @@ fun TaskManagerScreen(uid: Long) {
 
     val scrollState = rememberScrollState()
 
-    // Native date picker; stores result as "yyyy-M-d" to match model
     val calendar = Calendar.getInstance()
     val datePickerDialog = DatePickerDialog(
         context,
@@ -507,15 +577,16 @@ fun TaskManagerScreen(uid: Long) {
             keyboardOptions = KeyboardOptions.Default.copy(imeAction = ImeAction.Done)
         )
 
-        // Small segmented controls implemented with Material3 FilterChip
         CategorySelector(selectedCategory) { selectedCategory = it }
         PrioritySelector(selectedPriority) { selectedPriority = it }
 
         OutlinedButton(onClick = { datePickerDialog.show() }, modifier = Modifier.fillMaxWidth()) {
             Text(text = selectedDate?.let { "🗓 Deadline: $it" } ?: "Select Deadline")
         }
-        val marimbaSong = MediaPlayer.create(context, R.raw.marimba)
-        // Append new task to user’s list and persist; clears inputs on success
+
+        // Create once per composition
+        val marimbaSong = remember { MediaPlayer.create(context, R.raw.marimba) }
+
         Button(
             onClick = {
                 if (taskName.isNotBlank()) {
@@ -531,14 +602,15 @@ fun TaskManagerScreen(uid: Long) {
                         taskName = ""
                         selectedDate = null
                         marimbaSong.start()
-                }               }
+                    }
+                }
             },
             modifier = Modifier.fillMaxWidth()
         ) { Text("Add Task to Home") }
     }
 }
 
-// Small segmented controls implemented with Material3 FilterChip
+/* ---------- Small segmented controls ---------- */
 @Composable
 fun CategorySelector(selected: String, onSelect: (String) -> Unit) {
     Column {
@@ -551,7 +623,6 @@ fun CategorySelector(selected: String, onSelect: (String) -> Unit) {
     }
 }
 
-// Small segmented controls implemented with Material3 FilterChip
 @Composable
 fun PrioritySelector(selected: String, onSelect: (String) -> Unit) {
     Column {
@@ -564,7 +635,6 @@ fun PrioritySelector(selected: String, onSelect: (String) -> Unit) {
     }
 }
 
-// Reusable text-only dropdown used by Home filters
 @Composable
 fun FilterDropdown(label: String, options: List<String>, selected: String, onSelect: (String) -> Unit) {
     var expanded by remember { mutableStateOf(false) }
@@ -590,7 +660,6 @@ fun WeeklyPlannerScreen(uid: Long) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
 
-    // Keep a local editable copy of saved tasks; explicit Save writes back
     val savedTasks by TaskPrefs.getTasks(context, uid).collectAsState(initial = emptyList())
     var editableTasks by remember { mutableStateOf(savedTasks.toMutableList()) }
     LaunchedEffect(savedTasks) { editableTasks = savedTasks.toMutableList() }
@@ -601,7 +670,6 @@ fun WeeklyPlannerScreen(uid: Long) {
     val horizontalScroll = rememberScrollState()
     var editingIndex by remember { mutableStateOf<Int?>(null) }
 
-    // Helpers to bucket tasks by weekday and format display dates
     fun getDayOfWeek(dateStr: String?): String? {
         if (dateStr.isNullOrBlank()) return null
         return try {
@@ -620,7 +688,6 @@ fun WeeklyPlannerScreen(uid: Long) {
         } catch (_: Exception) { null }
     }
 
-    // Helper: format a yyyy-M-d string to a friendly label
     fun prettyDate(dateStr: String?): String {
         if (dateStr.isNullOrBlank()) return "No date"
         return try {
@@ -632,16 +699,19 @@ fun WeeklyPlannerScreen(uid: Long) {
     }
 
     Column(
-        modifier = Modifier.fillMaxSize().padding(8.dp)
+        modifier = Modifier
+            .fillMaxSize()
+            .padding(8.dp)
     ) {
-        // Explicit Save for all edits in this planner
         Button(onClick = { persist(editableTasks) }, modifier = Modifier.align(Alignment.End)) {
             Text("Save")
         }
 
-        // Horizontal swimlanes by weekday
         Row(
-            modifier = Modifier.fillMaxSize().horizontalScroll(horizontalScroll).padding(top = 8.dp),
+            modifier = Modifier
+                .fillMaxSize()
+                .horizontalScroll(horizontalScroll)
+                .padding(top = 8.dp),
             horizontalArrangement = Arrangement.spacedBy(8.dp)
         ) {
             daysOfWeek.forEach { day ->
@@ -672,13 +742,19 @@ fun WeeklyPlannerScreen(uid: Long) {
                         indicesForDay.forEach { globalIdx ->
                             val task = editableTasks[globalIdx]
                             Row(
-                                modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp),
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(vertical = 4.dp),
                                 verticalAlignment = Alignment.CenterVertically,
                                 horizontalArrangement = Arrangement.SpaceBetween
                             ) {
                                 Column(Modifier.weight(1f)) {
                                     Text(task.name, style = MaterialTheme.typography.bodyMedium, maxLines = 1)
-                                    Text(prettyDate(task.scheduledDay), style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                    Text(
+                                        prettyDate(task.scheduledDay),
+                                        style = MaterialTheme.typography.labelSmall,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                                    )
                                     Text("${task.category} | ${task.priority}", style = MaterialTheme.typography.labelSmall)
                                 }
                                 Row {
@@ -700,7 +776,6 @@ fun WeeklyPlannerScreen(uid: Long) {
         }
     }
 
-    // Update category/priority for selected task, then persist and close dialog
     editingIndex?.let { idx ->
         if (idx in 0 until editableTasks.size) {
             val task = editableTasks[idx]
@@ -741,7 +816,6 @@ fun WeeklyPlannerScreen(uid: Long) {
                 dismissButton = { TextButton(onClick = { editingIndex = null }) { Text("Cancel") } }
             )
         } else {
-            // Selection became invalid due to list mutation; clear safely
             editingIndex = null
         }
     }
@@ -752,10 +826,8 @@ fun WeeklyPlannerScreen(uid: Long) {
 fun DashboardScreen(uid: Long) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
-    // Live view of user tasks; KPIs recompute automatically on change
     val tasks by TaskPrefs.getTasks(context, uid).collectAsState(initial = emptyList())
 
-    // Atomic list updates with immediate DataStore persistence
     fun setDone(task: Task) {
         val idx = tasks.indexOf(task)
         if (idx >= 0) {
@@ -773,7 +845,6 @@ fun DashboardScreen(uid: Long) {
         }
     }
 
-    // Small date utilities for yyyy-M-d storage format and UI labels
     fun parseDate(dateStr: String?): Calendar? {
         if (dateStr.isNullOrBlank()) return null
         return try {
@@ -800,12 +871,10 @@ fun DashboardScreen(uid: Long) {
         return (diff / (24*60*60*1000L)).toInt()
     }
 
-    // Normalize to midnight for date comparisons
     val today = Calendar.getInstance().apply {
         set(Calendar.HOUR_OF_DAY, 0); set(Calendar.MINUTE, 0); set(Calendar.SECOND, 0); set(Calendar.MILLISECOND, 0)
     }
 
-    // Derive finished/pending/overdue counts and percentages safely
     val total = tasks.size.coerceAtLeast(1)
     val finished = tasks.count { it.isDone }
     val overdue = tasks.count { !it.isDone && (parseDate(it.scheduledDay)?.before(today) == true) }
@@ -830,7 +899,6 @@ fun DashboardScreen(uid: Long) {
         .sortedBy { parseDate(it.scheduledDay)?.timeInMillis ?: 0L }
         .take(5)
 
-    // Counts consecutive days (backwards from today) with at least one completed task
     val nextDue = upcomingList.firstOrNull()
     fun completionStreakDays(): Int {
         var streak = 0
@@ -843,11 +911,12 @@ fun DashboardScreen(uid: Long) {
     }
     val streakDays = completionStreakDays()
 
-    // Animated progress ring for "Finished %" KPI
     val ringProgress by animateFloatAsState(targetValue = finishedPct / 100f, label = "progressAnim")
 
     Column(
-        modifier = Modifier.fillMaxSize().padding(horizontal = 24.dp, vertical = 16.dp),
+        modifier = Modifier
+            .fillMaxSize()
+            .padding(horizontal = 24.dp, vertical = 16.dp),
         verticalArrangement = Arrangement.spacedBy(20.dp)
     ) {
         Row(verticalAlignment = Alignment.CenterVertically) {
@@ -953,7 +1022,9 @@ private fun StatChip(title: String, value: String, sub: String) {
         elevation = CardDefaults.elevatedCardElevation(defaultElevation = 2.dp)
     ) {
         Column(
-            modifier = Modifier.widthIn(min = 110.dp).padding(horizontal = 14.dp, vertical = 10.dp),
+            modifier = Modifier
+                .widthIn(min = 110.dp)
+                .padding(horizontal = 14.dp, vertical = 10.dp),
             horizontalAlignment = Alignment.Start
         ) {
             Text(value, style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.SemiBold)
@@ -983,7 +1054,6 @@ private fun SectionCard(
 }
 
 /* ---------- Firestore hello ---------- */
-// Sanity ping: writes a "hello" doc under users/{uid}/meta/hello to verify Firestore
 private suspend fun helloFirestore(uid: Long) {
     val db = Firebase.firestore
     val doc = db.collection("users").document(uid.toString())
