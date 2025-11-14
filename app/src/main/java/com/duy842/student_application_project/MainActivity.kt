@@ -19,6 +19,7 @@ import androidx.compose.runtime.*
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
@@ -156,6 +157,63 @@ suspend fun showUndoDelete(
     if (res == SnackbarResult.ActionPerformed) onUndo()
 }
 
+/* ---------- App-wide premium background ---------- */
+@Composable
+private fun AppBackground(content: @Composable () -> Unit) {
+    // layered, subtle aurora (works in light & dark)
+    val cs = MaterialTheme.colorScheme
+    Box(
+        Modifier
+            .fillMaxSize()
+            .background(cs.background)
+    ) {
+        // soft radial blobs
+        Box(
+            Modifier
+                .matchParentSize()
+                .background(
+                    brush = Brush.radialGradient(
+                        colors = listOf(
+                            cs.primary.copy(alpha = 0.16f),
+                            Color.Transparent
+                        ),
+                        center = Offset(120f, 220f),
+                        radius = 600f
+                    )
+                )
+        )
+        Box(
+            Modifier
+                .matchParentSize()
+                .background(
+                    brush = Brush.radialGradient(
+                        colors = listOf(
+                            cs.tertiary.copy(alpha = 0.12f),
+                            Color.Transparent
+                        ),
+                        center = Offset(900f, 400f),
+                        radius = 700f
+                    )
+                )
+        )
+        // gentle vertical fade to keep content readable
+        Box(
+            Modifier
+                .matchParentSize()
+                .background(
+                    Brush.verticalGradient(
+                        listOf(
+                            cs.surface.copy(alpha = 0.55f),
+                            Color.Transparent,
+                            cs.surface.copy(alpha = 0.55f)
+                        )
+                    )
+                )
+        )
+        content()
+    }
+}
+
 
 // App entry & screens for the task manager.
 class MainActivity : ComponentActivity() {
@@ -203,14 +261,14 @@ class MainActivity : ComponentActivity() {
 
                     var currentScreen by rememberSaveable { mutableStateOf(Screen.Home) }
 
-                    // === Visual upgrade wrapper ===
-                    Surface(color = MaterialTheme.colorScheme.background) {
+                    AppBackground {
                         Scaffold(
-                            containerColor = MaterialTheme.colorScheme.background,
+                            containerColor = Color.Transparent,
+                            contentColor = MaterialTheme.colorScheme.onBackground,
                             snackbarHost = { SnackbarHost(snackbarHost) },
                             bottomBar = {
                                 NavigationBar(
-                                    containerColor = MaterialTheme.colorScheme.surface,
+                                    containerColor = Color.Transparent,
                                     contentColor = MaterialTheme.colorScheme.onSurfaceVariant
                                 ) {
                                     NavigationBarItem(
@@ -363,15 +421,6 @@ fun HomeScreen(
     Column(
         modifier = Modifier
             .fillMaxSize()
-            .background(
-                Brush.verticalGradient(
-                    colors = listOf(
-                        MaterialTheme.colorScheme.surface,
-                        MaterialTheme.colorScheme.surface.copy(alpha = 0.96f),
-                        MaterialTheme.colorScheme.background
-                    )
-                )
-            )
             .verticalScroll(scrollState)
             .padding(horizontal = 24.dp, vertical = 16.dp),
         verticalArrangement = Arrangement.spacedBy(24.dp)
@@ -382,7 +431,6 @@ fun HomeScreen(
                 style = MaterialTheme.typography.headlineSmall.copy(fontWeight = FontWeight.Bold, letterSpacing = 1.2.sp),
                 color = MaterialTheme.colorScheme.primary
             )
-            TextButton(onClick = onLogout) { Text("Log out") }
         }
 
         val quoteOfTheDay = remember { motivationalQuotes.random() }
@@ -882,6 +930,9 @@ fun DashboardScreen(uid: Long, snackbarHost: SnackbarHostState) {
     }
 
     val total = tasks.size.coerceAtLeast(1)
+    the@run {
+        // (no-op label for clarity)
+    }
     val finished = tasks.count { it.isDone }
     val overdue = tasks.count { !it.isDone && (parseDate(it.scheduledDay)?.before(today) == true) }
     val pending = tasks.count {
@@ -920,15 +971,6 @@ fun DashboardScreen(uid: Long, snackbarHost: SnackbarHostState) {
     Column(
         modifier = Modifier
             .fillMaxSize()
-            .background(
-                Brush.verticalGradient(
-                    colors = listOf(
-                        MaterialTheme.colorScheme.surface,
-                        MaterialTheme.colorScheme.surface.copy(alpha = 0.96f),
-                        MaterialTheme.colorScheme.background
-                    )
-                )
-            )
             .padding(horizontal = 24.dp, vertical = 16.dp),
         verticalArrangement = Arrangement.spacedBy(20.dp)
     ) {
