@@ -202,43 +202,75 @@ class MainActivity : ComponentActivity() {
                     TaskMirrorEffect(uid = uid)
 
                     var currentScreen by rememberSaveable { mutableStateOf(Screen.Home) }
-                    Scaffold(
-                        snackbarHost = { SnackbarHost(snackbarHost) },
-                        bottomBar = {
-                            NavigationBar {
-                                NavigationBarItem(
-                                    selected = currentScreen == Screen.Home,
-                                    onClick = { currentScreen = Screen.Home },
-                                    icon = { Icon(Icons.Default.Home, null) },
-                                    label = { Text("Home") }
-                                )
-                                NavigationBarItem(
-                                    selected = currentScreen == Screen.TaskManager,
-                                    onClick = { currentScreen = Screen.TaskManager },
-                                    icon = { Icon(Icons.Default.Add, null) },
-                                    label = { Text("Add Task") }
-                                )
-                                NavigationBarItem(
-                                    selected = currentScreen == Screen.WeeklyPlanner,
-                                    onClick = { currentScreen = Screen.WeeklyPlanner },
-                                    icon = { Icon(Icons.Default.DateRange, null) },
-                                    label = { Text("Planner") }
-                                )
-                                NavigationBarItem(
-                                    selected = currentScreen == Screen.Dashboard,
-                                    onClick = { currentScreen = Screen.Dashboard },
-                                    icon = { Icon(Icons.Default.Info, null) },
-                                    label = { Text("Dashboard") }
-                                )
+
+                    // === Visual upgrade wrapper ===
+                    Surface(color = MaterialTheme.colorScheme.background) {
+                        Scaffold(
+                            containerColor = MaterialTheme.colorScheme.background,
+                            snackbarHost = { SnackbarHost(snackbarHost) },
+                            bottomBar = {
+                                NavigationBar(
+                                    containerColor = MaterialTheme.colorScheme.surface,
+                                    contentColor = MaterialTheme.colorScheme.onSurfaceVariant
+                                ) {
+                                    NavigationBarItem(
+                                        selected = currentScreen == Screen.Home,
+                                        onClick = { currentScreen = Screen.Home },
+                                        icon = { Icon(Icons.Default.Home, null) },
+                                        label = { Text("Home") },
+                                        alwaysShowLabel = false,
+                                        colors = NavigationBarItemDefaults.colors(
+                                            selectedIconColor = MaterialTheme.colorScheme.primary,
+                                            selectedTextColor = MaterialTheme.colorScheme.primary,
+                                            indicatorColor = MaterialTheme.colorScheme.primaryContainer
+                                        )
+                                    )
+                                    NavigationBarItem(
+                                        selected = currentScreen == Screen.TaskManager,
+                                        onClick = { currentScreen = Screen.TaskManager },
+                                        icon = { Icon(Icons.Default.Add, null) },
+                                        label = { Text("Add Task") },
+                                        alwaysShowLabel = false,
+                                        colors = NavigationBarItemDefaults.colors(
+                                            selectedIconColor = MaterialTheme.colorScheme.primary,
+                                            selectedTextColor = MaterialTheme.colorScheme.primary,
+                                            indicatorColor = MaterialTheme.colorScheme.primaryContainer
+                                        )
+                                    )
+                                    NavigationBarItem(
+                                        selected = currentScreen == Screen.WeeklyPlanner,
+                                        onClick = { currentScreen = Screen.WeeklyPlanner },
+                                        icon = { Icon(Icons.Default.DateRange, null) },
+                                        label = { Text("Planner") },
+                                        alwaysShowLabel = false,
+                                        colors = NavigationBarItemDefaults.colors(
+                                            selectedIconColor = MaterialTheme.colorScheme.primary,
+                                            selectedTextColor = MaterialTheme.colorScheme.primary,
+                                            indicatorColor = MaterialTheme.colorScheme.primaryContainer
+                                        )
+                                    )
+                                    NavigationBarItem(
+                                        selected = currentScreen == Screen.Dashboard,
+                                        onClick = { currentScreen = Screen.Dashboard },
+                                        icon = { Icon(Icons.Default.Info, null) },
+                                        label = { Text("Dashboard") },
+                                        alwaysShowLabel = false,
+                                        colors = NavigationBarItemDefaults.colors(
+                                            selectedIconColor = MaterialTheme.colorScheme.primary,
+                                            selectedTextColor = MaterialTheme.colorScheme.primary,
+                                            indicatorColor = MaterialTheme.colorScheme.primaryContainer
+                                        )
+                                    )
+                                }
                             }
-                        }
-                    ) { innerPadding ->
-                        Box(Modifier.padding(innerPadding)) {
-                            when (currentScreen) {
-                                Screen.Home          -> HomeScreen(uid = uid, snackbarHost = snackbarHost, onLogout = { authVm.logout() })
-                                Screen.TaskManager   -> TaskManagerScreen(uid = uid, snackbarHost = snackbarHost)
-                                Screen.WeeklyPlanner -> WeeklyPlannerScreen(uid = uid, snackbarHost = snackbarHost)
-                                Screen.Dashboard     -> DashboardScreen(uid = uid, snackbarHost = snackbarHost)
+                        ) { innerPadding ->
+                            Box(Modifier.padding(innerPadding)) {
+                                when (currentScreen) {
+                                    Screen.Home          -> HomeScreen(uid = uid, snackbarHost = snackbarHost, onLogout = { authVm.logout() })
+                                    Screen.TaskManager   -> TaskManagerScreen(uid = uid, snackbarHost = snackbarHost)
+                                    Screen.WeeklyPlanner -> WeeklyPlannerScreen(uid = uid, snackbarHost = snackbarHost)
+                                    Screen.Dashboard     -> DashboardScreen(uid = uid, snackbarHost = snackbarHost)
+                                }
                             }
                         }
                     }
@@ -262,7 +294,9 @@ fun LoginScreen(
     var password by remember { mutableStateOf("") }
 
     Column(
-        modifier = Modifier.fillMaxSize().padding(24.dp),
+        modifier = Modifier
+            .fillMaxSize()
+            .padding(24.dp),
         verticalArrangement = Arrangement.Center,
         horizontalAlignment = Alignment.CenterHorizontally
     ) {
@@ -303,9 +337,6 @@ fun HomeScreen(
     val scope = rememberCoroutineScope()
     var tasks by remember { mutableStateOf(listOf<Task>()) }
 
-    // delete-confirm state
-    var deleteIndex by remember { mutableStateOf<Int?>(null) }
-
     var selectedCategory by remember { mutableStateOf("All") }
     var selectedPriority by remember { mutableStateOf("All") }
     var editingTaskIndex by remember { mutableStateOf(-1) }
@@ -330,7 +361,19 @@ fun HomeScreen(
     val scrollState = rememberScrollState()
 
     Column(
-        modifier = Modifier.fillMaxSize().verticalScroll(scrollState).padding(horizontal = 24.dp, vertical = 16.dp),
+        modifier = Modifier
+            .fillMaxSize()
+            .background(
+                Brush.verticalGradient(
+                    colors = listOf(
+                        MaterialTheme.colorScheme.surface,
+                        MaterialTheme.colorScheme.surface.copy(alpha = 0.96f),
+                        MaterialTheme.colorScheme.background
+                    )
+                )
+            )
+            .verticalScroll(scrollState)
+            .padding(horizontal = 24.dp, vertical = 16.dp),
         verticalArrangement = Arrangement.spacedBy(24.dp)
     ) {
         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
@@ -344,15 +387,19 @@ fun HomeScreen(
 
         val quoteOfTheDay = remember { motivationalQuotes.random() }
         Box(
-            modifier = Modifier.fillMaxWidth().padding(vertical = 8.dp).background(
-                brush = Brush.horizontalGradient(
-                    colors = listOf(
-                        MaterialTheme.colorScheme.primary.copy(alpha = 0.8f),
-                        MaterialTheme.colorScheme.tertiary.copy(alpha = 0.8f)
-                    )
-                ),
-                shape = MaterialTheme.shapes.medium
-            ).padding(20.dp)
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(vertical = 8.dp)
+                .background(
+                    brush = Brush.horizontalGradient(
+                        colors = listOf(
+                            MaterialTheme.colorScheme.primary.copy(alpha = 0.8f),
+                            MaterialTheme.colorScheme.tertiary.copy(alpha = 0.8f)
+                        )
+                    ),
+                    shape = MaterialTheme.shapes.medium
+                )
+                .padding(20.dp)
         ) {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Icon(Icons.Default.Star, contentDescription = "Motivation", tint = Color.White, modifier = Modifier.size(28.dp))
@@ -426,7 +473,11 @@ fun HomeScreen(
 
                                     HorizontalDivider(Modifier.padding(top = 12.dp, bottom = 8.dp))
 
-                                    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End, verticalAlignment = Alignment.CenterVertically) {
+                                    Row(
+                                        Modifier.fillMaxWidth(),
+                                        horizontalArrangement = Arrangement.End,
+                                        verticalAlignment = Alignment.CenterVertically
+                                    ) {
                                         IconButton(onClick = {
                                             editingTaskIndex = taskIndex
                                             editedPriority = task.priority
@@ -434,7 +485,7 @@ fun HomeScreen(
                                             showEditDialog = true
                                         }) { Icon(Icons.Default.Edit, contentDescription = "Edit Task") }
 
-                                        // Ask first
+                                        // Single delete action (bin icon) with confirm + undo
                                         var askConfirm by remember { mutableStateOf(false) }
                                         if (askConfirm) {
                                             ConfirmRemoveDialog(
@@ -459,11 +510,9 @@ fun HomeScreen(
                                                 onDismiss = { askConfirm = false }
                                             )
                                         }
-
                                         IconButton(onClick = { askConfirm = true }) {
                                             Icon(Icons.Default.Delete, contentDescription = "Delete Task")
                                         }
-                                        TextButton(onClick = { askConfirm = true }) { Text("Remove") }
                                     }
                                 }
                             }
@@ -532,7 +581,10 @@ fun TaskManagerScreen(uid: Long, snackbarHost: SnackbarHostState) {
     )
 
     Column(
-        modifier = Modifier.fillMaxSize().verticalScroll(scrollState).padding(24.dp),
+        modifier = Modifier
+            .fillMaxSize()
+            .verticalScroll(scrollState)
+            .padding(24.dp),
         verticalArrangement = Arrangement.spacedBy(16.dp)
     ) {
         Text("📝 Add New Task", style = MaterialTheme.typography.titleLarge)
@@ -625,9 +677,6 @@ fun WeeklyPlannerScreen(uid: Long, snackbarHost: SnackbarHostState) {
     var editableTasks by remember { mutableStateOf(savedTasks.toMutableList()) }
     LaunchedEffect(savedTasks) { editableTasks = savedTasks.toMutableList() }
 
-    // delete-confirm state
-    var pendingDeleteIdx by remember { mutableStateOf<Int?>(null) }
-
     fun persist(list: List<Task>) { scope.launch { TaskPrefs.saveTasks(context, uid, list) } }
 
     val daysOfWeek = listOf("Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun")
@@ -663,19 +712,28 @@ fun WeeklyPlannerScreen(uid: Long, snackbarHost: SnackbarHostState) {
     }
 
     Column(
-        modifier = Modifier.fillMaxSize().padding(8.dp)
+        modifier = Modifier
+            .fillMaxSize()
+            .padding(8.dp)
     ) {
         Button(onClick = { persist(editableTasks) }, modifier = Modifier.align(Alignment.End)) { Text("Save") }
 
         Row(
-            modifier = Modifier.fillMaxSize().horizontalScroll(horizontalScroll).padding(top = 8.dp),
+            modifier = Modifier
+                .fillMaxSize()
+                .horizontalScroll(horizontalScroll)
+                .padding(top = 8.dp),
             horizontalArrangement = Arrangement.spacedBy(8.dp)
         ) {
             daysOfWeek.forEach { day ->
                 val verticalScroll = rememberScrollState()
                 Column(
-                    modifier = Modifier.width(180.dp).padding(4.dp).verticalScroll(verticalScroll)
-                        .background(Color(0xFFF9F9F9), shape = MaterialTheme.shapes.medium).padding(8.dp)
+                    modifier = Modifier
+                        .width(180.dp)
+                        .padding(4.dp)
+                        .verticalScroll(verticalScroll)
+                        .background(Color(0xFFF9F9F9), shape = MaterialTheme.shapes.medium)
+                        .padding(8.dp)
                 ) {
                     Text(day, style = MaterialTheme.typography.titleMedium, modifier = Modifier.align(Alignment.CenterHorizontally), color = MaterialTheme.colorScheme.primary)
                     Spacer(Modifier.height(8.dp))
@@ -782,7 +840,6 @@ fun DashboardScreen(uid: Long, snackbarHost: SnackbarHostState) {
     val scope = rememberCoroutineScope()
     val tasks by TaskPrefs.getTasks(context, uid).collectAsState(initial = emptyList())
 
-    // delete-confirm (Dashboard)
     var taskToRemove by remember { mutableStateOf<Task?>(null) }
 
     fun setDone(task: Task) {
@@ -861,7 +918,18 @@ fun DashboardScreen(uid: Long, snackbarHost: SnackbarHostState) {
     val ringProgress by animateFloatAsState(targetValue = finishedPct / 100f, label = "progressAnim")
 
     Column(
-        modifier = Modifier.fillMaxSize().padding(horizontal = 24.dp, vertical = 16.dp),
+        modifier = Modifier
+            .fillMaxSize()
+            .background(
+                Brush.verticalGradient(
+                    colors = listOf(
+                        MaterialTheme.colorScheme.surface,
+                        MaterialTheme.colorScheme.surface.copy(alpha = 0.96f),
+                        MaterialTheme.colorScheme.background
+                    )
+                )
+            )
+            .padding(horizontal = 24.dp, vertical = 16.dp),
         verticalArrangement = Arrangement.spacedBy(20.dp)
     ) {
         Row(verticalAlignment = Alignment.CenterVertically) {
@@ -975,7 +1043,7 @@ fun DashboardScreen(uid: Long, snackbarHost: SnackbarHostState) {
         }
     }
 
-    // Extra safety: also allow delete via list-wide dialog trigger
+    // Optional extra dialog path
     taskToRemove?.let { t ->
         ConfirmRemoveDialog(
             title = "Remove this task?",
@@ -1009,12 +1077,17 @@ private fun ProgressRing(progress: Float, label: String, caption: String, ringCo
                 progress = progress.coerceIn(0f, 1f),
                 strokeWidth = 10.dp,
                 modifier = Modifier.size(110.dp),
-                color = ringColor
+                color = ringColor,
+                trackColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.35f)
+            )
+            Text(
+                label,
+                style = MaterialTheme.typography.titleLarge.copy(fontWeight = FontWeight.Bold),
+                color = MaterialTheme.colorScheme.onSurface
             )
         }
         Spacer(Modifier.height(8.dp))
-        Text(label, style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
-        Text(caption, style = MaterialTheme.typography.bodyMedium)
+        Text(caption, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
     }
 }
 
