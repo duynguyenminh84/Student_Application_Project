@@ -71,15 +71,13 @@ abstract class DebugTasksDb : RoomDatabase() {
 
 object DebugTasksMirror {
     @Volatile private var _db: DebugTasksDb? = null
-
     private fun db(ctx: android.content.Context): DebugTasksDb {
-        return _db ?: androidx.room.Room.databaseBuilder(
+        return _db ?: Room.databaseBuilder(
             ctx.applicationContext,
             DebugTasksDb::class.java,
             "debug_tasks.db"
         ).fallbackToDestructiveMigration().build().also { _db = it }
     }
-
     suspend fun replaceForUid(ctx: android.content.Context, uid: Long, tasks: List<Task>) {
         val dao = db(ctx).dao()
         dao.deleteForUid(uid)
@@ -107,7 +105,6 @@ private fun TaskMirrorEffect(uid: Long) {
     LaunchedEffect(uid) {
         if (uid > 0) {
             TaskPrefs.getTasks(ctx, uid).collect { list ->
-                // keep Room table in sync with DataStore
                 DebugTasksMirror.replaceForUid(ctx, uid, list)
             }
         }
@@ -117,97 +114,78 @@ private fun TaskMirrorEffect(uid: Long) {
 
 
 // App entry & screens for the task manager.
-// Firebase is used only to: (1) sign in anonymously (so Firestore works),
-// (2) one-time seeding of local tasks from cloud after login if empty,
-// (3) a tiny "hello" write to ensure Firestore connectivity.
-
 class MainActivity : ComponentActivity() {
-
-    // Prevents double-running the cloud init for the same user
     private var cloudInitForUid: Long? = null
-
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         setContent {
             Student_Application_ProjectTheme(dynamicColor = false) {
 
-                // --- Auth state (offline AuthViewModel) ---
                 val authVm: AuthViewModel = viewModel(factory = AuthViewModelFactory(application))
                 val isLoggedIn by authVm.isLoggedIn.collectAsState()
                 val error by authVm.error.collectAsState()
                 val uid by authVm.currentUserId.collectAsState()
-
-                // Compose-safe app context for DataStore calls
                 val appCtx = LocalContext.current.applicationContext
 
-                // --- Sign in to Firebase anonymously once (required for Firestore) ---
                 LaunchedEffect(Unit) {
                     try { Firebase.auth.signInAnonymously().await() } catch (_: Exception) {}
                 }
 
-                // --- After local login: seed local tasks once if empty + ping Firestore ---
                 LaunchedEffect(isLoggedIn, uid) {
                     if (isLoggedIn && uid > 0 && cloudInitForUid != uid) {
                         cloudInitForUid = uid
                         try {
-                            val cloudKey = uid.toString()
                             val local = TaskPrefs.getTasks(appCtx, uid).first()
                             if (local.isEmpty()) {
-                                val remote = CloudTasks.pullAll(cloudKey) ?: emptyList()
-                                if (remote.isNotEmpty()) {
-                                    TaskPrefs.saveTasks(appCtx, uid, remote)
-                                }
+                                val remote = CloudTasks.pullAll(uid.toString()) ?: emptyList()
+                                if (remote.isNotEmpty()) TaskPrefs.saveTasks(appCtx, uid, remote)
                             }
                             helloFirestore(uid)
-                        } catch (_: Exception) {
-                            // offline-first: ignore errors here
-                        }
+                        } catch (_: Exception) { }
                     }
                 }
 
                 if (!isLoggedIn) {
                     LoginScreen(
-                        onLogin = { email, pass -> authVm.login(email, pass) },
-                        onRegister = { email, pass -> authVm.register(email, pass) },
+                        onLogin = { e, p -> authVm.login(e, p) },
+                        onRegister = { e, p -> authVm.register(e, p) },
                         error = error
                     )
                 } else {
-                    // >>> NEW: start the mirror once logged in
                     TaskMirrorEffect(uid = uid)
 
                     var currentScreen by rememberSaveable { mutableStateOf(Screen.Home) }
-
                     Scaffold(
                         bottomBar = {
                             NavigationBar {
                                 NavigationBarItem(
                                     selected = currentScreen == Screen.Home,
                                     onClick = { currentScreen = Screen.Home },
-                                    icon = { Icon(Icons.Default.Home, contentDescription = "Home") },
+                                    icon = { Icon(Icons.Default.Home, null) },
                                     label = { Text("Home") }
                                 )
                                 NavigationBarItem(
                                     selected = currentScreen == Screen.TaskManager,
                                     onClick = { currentScreen = Screen.TaskManager },
-                                    icon = { Icon(Icons.Default.Add, contentDescription = "Add Task") },
+                                    icon = { Icon(Icons.Default.Add, null) },
                                     label = { Text("Add Task") }
                                 )
                                 NavigationBarItem(
                                     selected = currentScreen == Screen.WeeklyPlanner,
                                     onClick = { currentScreen = Screen.WeeklyPlanner },
-                                    icon = { Icon(Icons.Default.DateRange, contentDescription = "Planner") },
+                                    icon = { Icon(Icons.Default.DateRange, null) },
                                     label = { Text("Planner") }
                                 )
                                 NavigationBarItem(
                                     selected = currentScreen == Screen.Dashboard,
                                     onClick = { currentScreen = Screen.Dashboard },
-                                    icon = { Icon(Icons.Default.Info, contentDescription = "Dashboard") },
+                                    icon = { Icon(Icons.Default.Info, null) },
                                     label = { Text("Dashboard") }
                                 )
                             }
                         }
                     ) { innerPadding ->
-                        Box(modifier = Modifier.padding(innerPadding)) {
+                        Box(Modifier.padding(innerPadding)) {
                             when (currentScreen) {
                                 Screen.Home          -> HomeScreen(uid = uid, onLogout = { authVm.logout() })
                                 Screen.TaskManager   -> TaskManagerScreen(uid = uid)
@@ -235,6 +213,27 @@ data class Task(
     val scheduledHour: Int? = null
 )
 
+/* ---------- Reusable confirm dialog ---------- */
+@Composable
+private fun ConfirmRemoveDialog(
+    title: String = "Remove task?",
+    message: String = "This action cannot be undone.",
+    onConfirm: () -> Unit,
+    onDismiss: () -> Unit
+) {
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        icon = { Icon(Icons.Default.Warning, contentDescription = null) },
+        title = { Text(title) },
+        text = { Text(message) },
+        confirmButton = {
+            TextButton(onClick = onConfirm) { Text("Remove") }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss) { Text("Cancel") }
+        }
+    )
+}
 
 /* ---------- Auth UI ---------- */
 @Composable
@@ -247,39 +246,27 @@ fun LoginScreen(
     var password by remember { mutableStateOf("") }
 
     Column(
-        modifier = Modifier
-            .fillMaxSize()
-            .padding(24.dp),
+        modifier = Modifier.fillMaxSize().padding(24.dp),
         verticalArrangement = Arrangement.Center,
         horizontalAlignment = Alignment.CenterHorizontally
     ) {
         Text("🔐 Login", style = MaterialTheme.typography.headlineMedium)
         Spacer(Modifier.height(16.dp))
-
         OutlinedTextField(
-            value = email,
-            onValueChange = { email = it },
-            label = { Text("Email") },
-            singleLine = true,
-            modifier = Modifier.fillMaxWidth()
+            value = email, onValueChange = { email = it },
+            label = { Text("Email") }, singleLine = true, modifier = Modifier.fillMaxWidth()
         )
         Spacer(Modifier.height(8.dp))
         OutlinedTextField(
-            value = password,
-            onValueChange = { password = it },
-            label = { Text("Password") },
-            singleLine = true,
-            visualTransformation = PasswordVisualTransformation(),
-            modifier = Modifier.fillMaxWidth()
+            value = password, onValueChange = { password = it },
+            label = { Text("Password") }, singleLine = true,
+            visualTransformation = PasswordVisualTransformation(), modifier = Modifier.fillMaxWidth()
         )
-
         if (!error.isNullOrBlank()) {
             Spacer(Modifier.height(8.dp))
             Text(error, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.labelMedium)
         }
-
         Spacer(Modifier.height(16.dp))
-
         Button(onClick = { onLogin(email, password) }, modifier = Modifier.fillMaxWidth()) {
             Text("Login")
         }
@@ -299,7 +286,9 @@ fun HomeScreen(
     val scope = rememberCoroutineScope()
     var tasks by remember { mutableStateOf(listOf<Task>()) }
 
-    // Filters + edit dialog state
+    // delete-confirm state
+    var deleteIndex by remember { mutableStateOf<Int?>(null) }
+
     var selectedCategory by remember { mutableStateOf("All") }
     var selectedPriority by remember { mutableStateOf("All") }
     var editingTaskIndex by remember { mutableStateOf(-1) }
@@ -307,7 +296,6 @@ fun HomeScreen(
     var editedCategory by remember { mutableStateOf("Assignment") }
     var showEditDialog by remember { mutableStateOf(false) }
 
-    // Observe per-user tasks from DataStore
     LaunchedEffect(uid) {
         TaskPrefs.getTasks(context, uid).collect { loaded -> tasks = loaded }
     }
@@ -325,23 +313,13 @@ fun HomeScreen(
     val scrollState = rememberScrollState()
 
     Column(
-        modifier = Modifier
-            .fillMaxSize()
-            .verticalScroll(scrollState)
-            .padding(horizontal = 24.dp, vertical = 16.dp),
+        modifier = Modifier.fillMaxSize().verticalScroll(scrollState).padding(horizontal = 24.dp, vertical = 16.dp),
         verticalArrangement = Arrangement.spacedBy(24.dp)
     ) {
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.SpaceBetween,
-            verticalAlignment = Alignment.CenterVertically
-        ) {
+        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
             Text(
                 text = "📋 Task Reminder",
-                style = MaterialTheme.typography.headlineSmall.copy(
-                    fontWeight = FontWeight.Bold,
-                    letterSpacing = 1.2.sp
-                ),
+                style = MaterialTheme.typography.headlineSmall.copy(fontWeight = FontWeight.Bold, letterSpacing = 1.2.sp),
                 color = MaterialTheme.colorScheme.primary
             )
             TextButton(onClick = onLogout) { Text("Log out") }
@@ -349,65 +327,48 @@ fun HomeScreen(
 
         val quoteOfTheDay = remember { motivationalQuotes.random() }
         Box(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(vertical = 8.dp)
-                .background(
-                    brush = Brush.horizontalGradient(
-                        colors = listOf(
-                            MaterialTheme.colorScheme.primary.copy(alpha = 0.8f),
-                            MaterialTheme.colorScheme.tertiary.copy(alpha = 0.8f)
-                        )
-                    ),
-                    shape = MaterialTheme.shapes.medium
-                )
-                .padding(20.dp)
+            modifier = Modifier.fillMaxWidth().padding(vertical = 8.dp).background(
+                brush = Brush.horizontalGradient(
+                    colors = listOf(
+                        MaterialTheme.colorScheme.primary.copy(alpha = 0.8f),
+                        MaterialTheme.colorScheme.tertiary.copy(alpha = 0.8f)
+                    )
+                ),
+                shape = MaterialTheme.shapes.medium
+            ).padding(20.dp)
         ) {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Icon(Icons.Default.Star, contentDescription = "Motivation", tint = Color.White, modifier = Modifier.size(28.dp))
-                Spacer(modifier = Modifier.width(12.dp))
+                Spacer(Modifier.width(12.dp))
                 Text(
                     text = quoteOfTheDay,
                     style = MaterialTheme.typography.titleMedium.copy(
-                        fontSize = 18.sp,
-                        fontWeight = FontWeight.SemiBold,
-                        fontStyle = FontStyle.Italic,
-                        lineHeight = 24.sp
+                        fontSize = 18.sp, fontWeight = FontWeight.SemiBold, fontStyle = FontStyle.Italic, lineHeight = 24.sp
                     ),
                     color = Color.White
                 )
             }
         }
 
-        // Filters
-        ElevatedCard(modifier = Modifier.fillMaxWidth()) {
-            Column(modifier = Modifier.padding(16.dp)) {
+        ElevatedCard(Modifier.fillMaxWidth()) {
+            Column(Modifier.padding(16.dp)) {
                 Text("Filter your tasks", style = MaterialTheme.typography.titleMedium)
                 Spacer(Modifier.height(8.dp))
                 Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                    FilterDropdown(
-                        label = "Category",
-                        options = listOf("All", "Assignment", "Exam", "Personal"),
-                        selected = selectedCategory
-                    ) { selectedCategory = it }
-                    FilterDropdown(
-                        label = "Priority",
-                        options = listOf("All", "High", "Medium", "Low"),
-                        selected = selectedPriority
-                    ) { selectedPriority = it }
+                    FilterDropdown("Category", listOf("All", "Assignment", "Exam", "Personal"), selectedCategory) { selectedCategory = it }
+                    FilterDropdown("Priority", listOf("All", "High", "Medium", "Low"), selectedPriority) { selectedPriority = it }
                 }
             }
         }
 
-        // Task list
-        ElevatedCard(modifier = Modifier.fillMaxWidth()) {
-            Column(modifier = Modifier.padding(16.dp)) {
+        ElevatedCard(Modifier.fillMaxWidth()) {
+            Column(Modifier.padding(16.dp)) {
                 Text("🎯 All Tasks", style = MaterialTheme.typography.headlineSmall.copy(fontWeight = FontWeight.SemiBold))
                 Spacer(Modifier.height(8.dp))
 
-                val displayedTasks = tasks.filter { task ->
-                    (selectedCategory == "All" || task.category == selectedCategory) &&
-                            (selectedPriority == "All" || task.priority == selectedPriority)
+                val displayedTasks = tasks.filter { t ->
+                    (selectedCategory == "All" || t.category == selectedCategory) &&
+                            (selectedPriority == "All" || t.priority == selectedPriority)
                 }
 
                 if (displayedTasks.isEmpty()) {
@@ -419,19 +380,9 @@ fun HomeScreen(
                     Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
                         displayedTasks.forEach { task ->
                             val taskIndex = tasks.indexOf(task)
-                            ElevatedCard(
-                                modifier = Modifier.fillMaxWidth(),
-                                elevation = CardDefaults.elevatedCardElevation(defaultElevation = 4.dp)
-                            ) {
-                                Column(
-                                    modifier = Modifier
-                                        .padding(16.dp)
-                                        .fillMaxWidth()
-                                ) {
-                                    Row(
-                                        modifier = Modifier.fillMaxWidth(),
-                                        verticalAlignment = Alignment.CenterVertically
-                                    ) {
+                            ElevatedCard(Modifier.fillMaxWidth(), elevation = CardDefaults.elevatedCardElevation(4.dp)) {
+                                Column(Modifier.padding(16.dp).fillMaxWidth()) {
+                                    Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
                                         Checkbox(
                                             checked = task.isDone,
                                             onCheckedChange = { isChecked ->
@@ -439,38 +390,26 @@ fun HomeScreen(
                                                 scope.launch { TaskPrefs.saveTasks(context, uid, tasks) }
                                             }
                                         )
-                                        Spacer(modifier = Modifier.width(8.dp))
+                                        Spacer(Modifier.width(8.dp))
                                         Column(Modifier.weight(1f)) {
                                             Text(task.name, style = MaterialTheme.typography.bodyMedium)
-                                            Row(
-                                                verticalAlignment = Alignment.CenterVertically,
-                                                horizontalArrangement = Arrangement.spacedBy(8.dp)
-                                            ) {
+                                            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                                                 Text("📂 ${task.category}", style = MaterialTheme.typography.labelSmall)
                                                 AssistChip(onClick = {}, label = { Text(task.priority) })
                                                 val deadlineText = when {
-                                                    !task.scheduledDay.isNullOrBlank() && task.scheduledHour != null ->
-                                                        "🗓 ${task.scheduledDay} at ${task.scheduledHour}:00"
+                                                    !task.scheduledDay.isNullOrBlank() && task.scheduledHour != null -> "🗓 ${task.scheduledDay} at ${task.scheduledHour}:00"
                                                     !task.scheduledDay.isNullOrBlank() -> "🗓 ${task.scheduledDay}"
                                                     task.scheduledHour != null -> "🗓 Today at ${task.scheduledHour}:00"
                                                     else -> "🗓 No deadline"
                                                 }
-                                                Text(
-                                                    deadlineText,
-                                                    style = MaterialTheme.typography.labelSmall,
-                                                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                                                )
+                                                Text(deadlineText, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                                             }
                                         }
                                     }
 
-                                    HorizontalDivider(modifier = Modifier.padding(top = 12.dp, bottom = 8.dp))
+                                    HorizontalDivider(Modifier.padding(top = 12.dp, bottom = 8.dp))
 
-                                    Row(
-                                        modifier = Modifier.fillMaxWidth(),
-                                        horizontalArrangement = Arrangement.End,
-                                        verticalAlignment = Alignment.CenterVertically
-                                    ) {
+                                    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End, verticalAlignment = Alignment.CenterVertically) {
                                         IconButton(onClick = {
                                             editingTaskIndex = taskIndex
                                             editedPriority = task.priority
@@ -478,15 +417,11 @@ fun HomeScreen(
                                             showEditDialog = true
                                         }) { Icon(Icons.Default.Edit, contentDescription = "Edit Task") }
 
-                                        IconButton(onClick = {
-                                            tasks = tasks.filterIndexed { i, _ -> i != taskIndex }
-                                            scope.launch { TaskPrefs.saveTasks(context, uid, tasks) }
-                                        }) { Icon(Icons.Default.Delete, contentDescription = "Delete Task") }
+                                        IconButton(onClick = { deleteIndex = taskIndex }) {
+                                            Icon(Icons.Default.Delete, contentDescription = "Delete Task")
+                                        }
 
-                                        TextButton(onClick = {
-                                            tasks = tasks.filterIndexed { i, _ -> i != taskIndex }
-                                            scope.launch { TaskPrefs.saveTasks(context, uid, tasks) }
-                                        }) { Text("Remove") }
+                                        TextButton(onClick = { deleteIndex = taskIndex }) { Text("Remove") }
                                     }
                                 }
                             }
@@ -497,10 +432,25 @@ fun HomeScreen(
         }
     }
 
+    // Confirm remove (Home)
+    deleteIndex?.let { idx ->
+        ConfirmRemoveDialog(
+            title = "Remove this task?",
+            message = "This will delete the task from your list.",
+            onConfirm = {
+                val newList = tasks.filterIndexed { i, _ -> i != idx }
+                tasks = newList
+                deleteIndex = null
+                scope.launch { TaskPrefs.saveTasks(context, uid, newList) }
+            },
+            onDismiss = { deleteIndex = null }
+        )
+    }
+
     // Edit dialog (category/priority only)
     if (showEditDialog && editingTaskIndex != -1) {
-        val scope = rememberCoroutineScope()
-        val context = LocalContext.current
+        val scope2 = rememberCoroutineScope()
+        val context2 = LocalContext.current
         AlertDialog(
             onDismissRequest = { showEditDialog = false },
             confirmButton = {
@@ -508,7 +458,7 @@ fun HomeScreen(
                     tasks = tasks.mapIndexed { i, t ->
                         if (i == editingTaskIndex) t.copy(priority = editedPriority, category = editedCategory) else t
                     }
-                    scope.launch { TaskPrefs.saveTasks(context, uid, tasks) }
+                    scope2.launch { TaskPrefs.saveTasks(context2, uid, tasks) }
                     showEditDialog = false
                 }) { Text("Save") }
             },
@@ -519,16 +469,14 @@ fun HomeScreen(
                     Text("Select Category", style = MaterialTheme.typography.labelMedium)
                     listOf("Assignment", "Exam", "Personal").forEach { option ->
                         Row(verticalAlignment = Alignment.CenterVertically) {
-                            RadioButton(selected = editedCategory == option, onClick = { editedCategory = option })
-                            Text(option)
+                            RadioButton(selected = editedCategory == option, onClick = { editedCategory = option }); Text(option)
                         }
                     }
                     Spacer(Modifier.height(8.dp))
                     Text("Select Priority", style = MaterialTheme.typography.labelMedium)
                     listOf("High", "Medium", "Low").forEach { option ->
                         Row(verticalAlignment = Alignment.CenterVertically) {
-                            RadioButton(selected = editedPriority == option, onClick = { editedPriority = option })
-                            Text(option)
+                            RadioButton(selected = editedPriority == option, onClick = { editedPriority = option }); Text(option)
                         }
                     }
                 }
@@ -549,30 +497,22 @@ fun TaskManagerScreen(uid: Long) {
     var selectedDate by remember { mutableStateOf<String?>(null) }
 
     val scrollState = rememberScrollState()
-
     val calendar = Calendar.getInstance()
     val datePickerDialog = DatePickerDialog(
         context,
         { _, y, m, d -> selectedDate = "$y-${m + 1}-$d" },
-        calendar.get(Calendar.YEAR),
-        calendar.get(Calendar.MONTH),
-        calendar.get(Calendar.DAY_OF_MONTH)
+        calendar.get(Calendar.YEAR), calendar.get(Calendar.MONTH), calendar.get(Calendar.DAY_OF_MONTH)
     )
 
     Column(
-        modifier = Modifier
-            .fillMaxSize()
-            .verticalScroll(scrollState)
-            .padding(24.dp),
+        modifier = Modifier.fillMaxSize().verticalScroll(scrollState).padding(24.dp),
         verticalArrangement = Arrangement.spacedBy(16.dp)
     ) {
         Text("📝 Add New Task", style = MaterialTheme.typography.titleLarge)
 
         OutlinedTextField(
-            value = taskName,
-            onValueChange = { taskName = it },
-            label = { Text("Task Name") },
-            modifier = Modifier.fillMaxWidth(),
+            value = taskName, onValueChange = { taskName = it },
+            label = { Text("Task Name") }, modifier = Modifier.fillMaxWidth(),
             keyboardOptions = KeyboardOptions.Default.copy(imeAction = ImeAction.Done)
         )
 
@@ -583,7 +523,6 @@ fun TaskManagerScreen(uid: Long) {
             Text(text = selectedDate?.let { "🗓 Deadline: $it" } ?: "Select Deadline")
         }
 
-        // Create once per composition
         val marimbaSong = remember { MediaPlayer.create(context, R.raw.marimba) }
 
         Button(
@@ -598,9 +537,7 @@ fun TaskManagerScreen(uid: Long) {
                             scheduledDay = selectedDate
                         )
                         TaskPrefs.saveTasks(context, uid, current + newTask)
-                        taskName = ""
-                        selectedDate = null
-                        marimbaSong.start()
+                        taskName = ""; selectedDate = null; marimbaSong.start()
                     }
                 }
             },
@@ -616,7 +553,7 @@ fun CategorySelector(selected: String, onSelect: (String) -> Unit) {
         Text("Category", style = MaterialTheme.typography.titleSmall)
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             listOf("Assignment", "Exam", "Personal").forEach {
-                FilterChip(selected = selected == it, onClick = { onSelect(it) }, label = { Text(it) })
+                FilterChip(selected = (selected == it), onClick = { onSelect(it) }, label = { Text(it) })
             }
         }
     }
@@ -628,7 +565,7 @@ fun PrioritySelector(selected: String, onSelect: (String) -> Unit) {
         Text("Priority", style = MaterialTheme.typography.titleSmall)
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             listOf("High", "Medium", "Low").forEach {
-                FilterChip(selected = selected == it, onClick = { onSelect(it) }, label = { Text(it) })
+                FilterChip(selected = (selected == it), onClick = { onSelect(it) }, label = { Text(it) })
             }
         }
     }
@@ -643,10 +580,7 @@ fun FilterDropdown(label: String, options: List<String>, selected: String, onSel
             OutlinedButton(onClick = { expanded = true }) { Text(selected) }
             DropdownMenu(expanded = expanded, onDismissRequest = { expanded = false }) {
                 options.forEach {
-                    DropdownMenuItem(
-                        text = { Text(it) },
-                        onClick = { onSelect(it); expanded = false }
-                    )
+                    DropdownMenuItem(text = { Text(it) }, onClick = { onSelect(it); expanded = false })
                 }
             }
         }
@@ -662,6 +596,9 @@ fun WeeklyPlannerScreen(uid: Long) {
     val savedTasks by TaskPrefs.getTasks(context, uid).collectAsState(initial = emptyList())
     var editableTasks by remember { mutableStateOf(savedTasks.toMutableList()) }
     LaunchedEffect(savedTasks) { editableTasks = savedTasks.toMutableList() }
+
+    // delete-confirm state
+    var pendingDeleteIdx by remember { mutableStateOf<Int?>(null) }
 
     fun persist(list: List<Task>) { scope.launch { TaskPrefs.saveTasks(context, uid, list) } }
 
@@ -698,42 +635,24 @@ fun WeeklyPlannerScreen(uid: Long) {
     }
 
     Column(
-        modifier = Modifier
-            .fillMaxSize()
-            .padding(8.dp)
+        modifier = Modifier.fillMaxSize().padding(8.dp)
     ) {
-        Button(onClick = { persist(editableTasks) }, modifier = Modifier.align(Alignment.End)) {
-            Text("Save")
-        }
+        Button(onClick = { persist(editableTasks) }, modifier = Modifier.align(Alignment.End)) { Text("Save") }
 
         Row(
-            modifier = Modifier
-                .fillMaxSize()
-                .horizontalScroll(horizontalScroll)
-                .padding(top = 8.dp),
+            modifier = Modifier.fillMaxSize().horizontalScroll(horizontalScroll).padding(top = 8.dp),
             horizontalArrangement = Arrangement.spacedBy(8.dp)
         ) {
             daysOfWeek.forEach { day ->
                 val verticalScroll = rememberScrollState()
                 Column(
-                    modifier = Modifier
-                        .width(180.dp)
-                        .padding(4.dp)
-                        .verticalScroll(verticalScroll)
-                        .background(Color(0xFFF9F9F9), shape = MaterialTheme.shapes.medium)
-                        .padding(8.dp)
+                    modifier = Modifier.width(180.dp).padding(4.dp).verticalScroll(verticalScroll)
+                        .background(Color(0xFFF9F9F9), shape = MaterialTheme.shapes.medium).padding(8.dp)
                 ) {
-                    Text(
-                        text = day,
-                        style = MaterialTheme.typography.titleMedium,
-                        modifier = Modifier.align(Alignment.CenterHorizontally),
-                        color = MaterialTheme.colorScheme.primary
-                    )
-                    Spacer(modifier = Modifier.height(8.dp))
+                    Text(day, style = MaterialTheme.typography.titleMedium, modifier = Modifier.align(Alignment.CenterHorizontally), color = MaterialTheme.colorScheme.primary)
+                    Spacer(Modifier.height(8.dp))
 
-                    val indicesForDay = editableTasks.mapIndexedNotNull { idx, t ->
-                        if (getDayOfWeek(t.scheduledDay) == day) idx else null
-                    }
+                    val indicesForDay = editableTasks.mapIndexedNotNull { idx, t -> if (getDayOfWeek(t.scheduledDay) == day) idx else null }
 
                     if (indicesForDay.isEmpty()) {
                         Text("No tasks", style = MaterialTheme.typography.bodySmall)
@@ -741,29 +660,19 @@ fun WeeklyPlannerScreen(uid: Long) {
                         indicesForDay.forEach { globalIdx ->
                             val task = editableTasks[globalIdx]
                             Row(
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .padding(vertical = 4.dp),
-                                verticalAlignment = Alignment.CenterVertically,
-                                horizontalArrangement = Arrangement.SpaceBetween
+                                modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp),
+                                verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.SpaceBetween
                             ) {
                                 Column(Modifier.weight(1f)) {
                                     Text(task.name, style = MaterialTheme.typography.bodyMedium, maxLines = 1)
-                                    Text(
-                                        prettyDate(task.scheduledDay),
-                                        style = MaterialTheme.typography.labelSmall,
-                                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                                    )
+                                    Text(prettyDate(task.scheduledDay), style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                                     Text("${task.category} | ${task.priority}", style = MaterialTheme.typography.labelSmall)
                                 }
                                 Row {
                                     IconButton(onClick = { editingIndex = globalIdx }) {
                                         Icon(Icons.Default.Edit, contentDescription = "Edit Task")
                                     }
-                                    IconButton(onClick = {
-                                        editableTasks.removeAt(globalIdx)
-                                        persist(editableTasks)
-                                    }) {
+                                    IconButton(onClick = { pendingDeleteIdx = globalIdx }) {
                                         Icon(Icons.Default.Delete, contentDescription = "Delete Task")
                                     }
                                 }
@@ -773,6 +682,20 @@ fun WeeklyPlannerScreen(uid: Long) {
                 }
             }
         }
+    }
+
+    // Confirm remove (Planner)
+    pendingDeleteIdx?.let { idx ->
+        ConfirmRemoveDialog(
+            title = "Remove this task?",
+            message = "This will delete the task from your list.",
+            onConfirm = {
+                editableTasks.removeAt(idx)
+                persist(editableTasks)
+                pendingDeleteIdx = null
+            },
+            onDismiss = { pendingDeleteIdx = null }
+        )
     }
 
     editingIndex?.let { idx ->
@@ -789,34 +712,27 @@ fun WeeklyPlannerScreen(uid: Long) {
                         Text("Category", style = MaterialTheme.typography.labelMedium)
                         listOf("Assignment", "Exam", "Personal").forEach { option ->
                             Row(verticalAlignment = Alignment.CenterVertically) {
-                                RadioButton(selected = editedCategory == option, onClick = { editedCategory = option })
-                                Text(option)
+                                RadioButton(selected = editedCategory == option, onClick = { editedCategory = option }); Text(option)
                             }
                         }
                         Text("Priority", style = MaterialTheme.typography.labelMedium)
                         listOf("High", "Medium", "Low").forEach { option ->
                             Row(verticalAlignment = Alignment.CenterVertically) {
-                                RadioButton(selected = editedPriority == option, onClick = { editedPriority = option })
-                                Text(option)
+                                RadioButton(selected = editedPriority == option, onClick = { editedPriority = option }); Text(option)
                             }
                         }
                     }
                 },
                 confirmButton = {
                     TextButton(onClick = {
-                        editableTasks[idx] = editableTasks[idx].copy(
-                            category = editedCategory,
-                            priority = editedPriority
-                        )
+                        editableTasks[idx] = editableTasks[idx].copy(category = editedCategory, priority = editedPriority)
                         persist(editableTasks)
                         editingIndex = null
                     }) { Text("Save") }
                 },
                 dismissButton = { TextButton(onClick = { editingIndex = null }) { Text("Cancel") } }
             )
-        } else {
-            editingIndex = null
-        }
+        } else editingIndex = null
     }
 }
 
@@ -827,19 +743,14 @@ fun DashboardScreen(uid: Long) {
     val scope = rememberCoroutineScope()
     val tasks by TaskPrefs.getTasks(context, uid).collectAsState(initial = emptyList())
 
+    // delete-confirm (Dashboard)
+    var taskToRemove by remember { mutableStateOf<Task?>(null) }
+
     fun setDone(task: Task) {
         val idx = tasks.indexOf(task)
         if (idx >= 0) {
             val newList = tasks.toMutableList()
             newList[idx] = newList[idx].copy(isDone = true)
-            scope.launch { TaskPrefs.saveTasks(context, uid, newList) }
-        }
-    }
-    fun removeTask(task: Task) {
-        val idx = tasks.indexOf(task)
-        if (idx >= 0) {
-            val newList = tasks.toMutableList()
-            newList.removeAt(idx)
             scope.launch { TaskPrefs.saveTasks(context, uid, newList) }
         }
     }
@@ -879,8 +790,7 @@ fun DashboardScreen(uid: Long) {
     val overdue = tasks.count { !it.isDone && (parseDate(it.scheduledDay)?.before(today) == true) }
     val pending = tasks.count {
         !it.isDone && when (val c = parseDate(it.scheduledDay)) {
-            null -> true
-            else -> !c.before(today)
+            null -> true else -> !c.before(today)
         }
     }
 
@@ -909,13 +819,10 @@ fun DashboardScreen(uid: Long) {
         return streak
     }
     val streakDays = completionStreakDays()
-
     val ringProgress by animateFloatAsState(targetValue = finishedPct / 100f, label = "progressAnim")
 
     Column(
-        modifier = Modifier
-            .fillMaxSize()
-            .padding(horizontal = 24.dp, vertical = 16.dp),
+        modifier = Modifier.fillMaxSize().padding(horizontal = 24.dp, vertical = 16.dp),
         verticalArrangement = Arrangement.spacedBy(20.dp)
     ) {
         Row(verticalAlignment = Alignment.CenterVertically) {
@@ -932,16 +839,10 @@ fun DashboardScreen(uid: Long) {
             StatChip(title = "Past Due", value = "${overduePct.toInt()}%", sub = "($overdue)")
         }
 
-        Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-            SectionCard(title = "Total Tasks", modifier = Modifier.weight(1f)) {
-                Text("$total", style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold)
-            }
-            SectionCard(title = "Streak", modifier = Modifier.weight(1f)) {
-                Text("$streakDays day${if (streakDays == 1) "" else "s"}", style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold)
-            }
-            SectionCard(title = "Next Due", modifier = Modifier.weight(1f)) {
-                Text(nextDue?.scheduledDay?.let { fmt(it) } ?: "—", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Medium)
-            }
+        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+            KPICard(title = "Total Tasks", value = "$total", modifier = Modifier.weight(1f))
+            KPICard(title = "Streak", value = "$streakDays day${if (streakDays == 1) "" else "s"}", modifier = Modifier.weight(1f))
+            KPICard(title = "Next Due", value = nextDue?.scheduledDay?.let { fmt(it) } ?: "—", modifier = Modifier.weight(1f))
         }
 
         SectionCard(title = "Overdue") {
@@ -950,18 +851,14 @@ fun DashboardScreen(uid: Long) {
             } else {
                 Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                     overdueList.forEach { t ->
-                        Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.SpaceBetween,
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
+                        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
                             Column(Modifier.weight(1f)) {
                                 Text(t.name, style = MaterialTheme.typography.bodyLarge, fontWeight = FontWeight.Medium, maxLines = 1)
                                 Text("${fmt(t.scheduledDay)} • ${t.category} • ${t.priority}", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                             }
                             Row {
                                 IconButton(onClick = { setDone(t) }) { Icon(Icons.Default.Check, contentDescription = "Mark Done") }
-                                IconButton(onClick = { removeTask(t) }) { Icon(Icons.Default.Delete, contentDescription = "Remove") }
+                                IconButton(onClick = { taskToRemove = t }) { Icon(Icons.Default.Delete, contentDescription = "Remove") }
                             }
                         }
                     }
@@ -975,24 +872,37 @@ fun DashboardScreen(uid: Long) {
             } else {
                 Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                     upcomingList.forEach { t ->
-                        Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.SpaceBetween,
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
+                        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
                             Column(Modifier.weight(1f)) {
                                 Text(t.name, style = MaterialTheme.typography.bodyLarge, fontWeight = FontWeight.Medium, maxLines = 1)
                                 Text("${fmt(t.scheduledDay)} • ${t.category} • ${t.priority}", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                             }
                             Row {
                                 IconButton(onClick = { setDone(t) }) { Icon(Icons.Default.Check, contentDescription = "Mark Done") }
-                                IconButton(onClick = { removeTask(t) }) { Icon(Icons.Default.Delete, contentDescription = "Remove") }
+                                IconButton(onClick = { taskToRemove = t }) { Icon(Icons.Default.Delete, contentDescription = "Remove") }
                             }
                         }
                     }
                 }
             }
         }
+    }
+
+    // Confirm remove (Dashboard)
+    taskToRemove?.let { t ->
+        ConfirmRemoveDialog(
+            title = "Remove this task?",
+            message = "This will delete the task from your list.",
+            onConfirm = {
+                val idx = tasks.indexOf(t)
+                if (idx >= 0) {
+                    val newList = tasks.toMutableList().also { it.removeAt(idx) }
+                    scope.launch { TaskPrefs.saveTasks(context, uid, newList) }
+                }
+                taskToRemove = null
+            },
+            onDismiss = { taskToRemove = null }
+        )
     }
 }
 
@@ -1016,14 +926,9 @@ private fun ProgressRing(progress: Float, label: String, caption: String, ringCo
 
 @Composable
 private fun StatChip(title: String, value: String, sub: String) {
-    ElevatedCard(
-        shape = MaterialTheme.shapes.medium,
-        elevation = CardDefaults.elevatedCardElevation(defaultElevation = 2.dp)
-    ) {
+    ElevatedCard(shape = MaterialTheme.shapes.medium, elevation = CardDefaults.elevatedCardElevation(2.dp)) {
         Column(
-            modifier = Modifier
-                .widthIn(min = 110.dp)
-                .padding(horizontal = 14.dp, vertical = 10.dp),
+            modifier = Modifier.widthIn(min = 110.dp).padding(horizontal = 14.dp, vertical = 10.dp),
             horizontalAlignment = Alignment.Start
         ) {
             Text(value, style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.SemiBold)
@@ -1033,17 +938,28 @@ private fun StatChip(title: String, value: String, sub: String) {
     }
 }
 
+/* Consistent KPI card — same shape/elevation/colors as SectionCard */
 @Composable
-private fun SectionCard(
-    title: String,
-    modifier: Modifier = Modifier,
-    content: @Composable () -> Unit
-) {
+private fun KPICard(title: String, value: String, modifier: Modifier = Modifier) {
     ElevatedCard(
-        modifier = modifier,
+        modifier = modifier.height(120.dp),
         shape = MaterialTheme.shapes.medium,
-        elevation = CardDefaults.elevatedCardElevation(defaultElevation = 3.dp)
+        elevation = CardDefaults.elevatedCardElevation(3.dp),
+        colors = CardDefaults.elevatedCardColors()
     ) {
+        Column(
+            modifier = Modifier.fillMaxSize().padding(horizontal = 16.dp, vertical = 12.dp),
+            verticalArrangement = Arrangement.SpaceBetween
+        ) {
+            Text(title, style = MaterialTheme.typography.titleMedium, color = MaterialTheme.colorScheme.primary, maxLines = 1, overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis)
+            Text(value, style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold, maxLines = 2, overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis)
+        }
+    }
+}
+
+@Composable
+private fun SectionCard(title: String, modifier: Modifier = Modifier, content: @Composable () -> Unit) {
+    ElevatedCard(modifier = modifier, shape = MaterialTheme.shapes.medium, elevation = CardDefaults.elevatedCardElevation(3.dp)) {
         Column(modifier = Modifier.padding(16.dp)) {
             Text(title, style = MaterialTheme.typography.titleMedium, color = MaterialTheme.colorScheme.primary)
             Spacer(Modifier.height(8.dp))
@@ -1055,7 +971,6 @@ private fun SectionCard(
 /* ---------- Firestore hello ---------- */
 private suspend fun helloFirestore(uid: Long) {
     val db = Firebase.firestore
-    val doc = db.collection("users").document(uid.toString())
-        .collection("meta").document("hello")
+    val doc = db.collection("users").document(uid.toString()).collection("meta").document("hello")
     doc.set(mapOf("message" to "Hi from the app!", "ts" to System.currentTimeMillis())).await()
 }
