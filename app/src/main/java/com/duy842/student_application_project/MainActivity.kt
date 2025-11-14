@@ -234,8 +234,7 @@ data class Task(
     val scheduledDay: String? = null,  // e.g. "2025-11-03"
     val scheduledHour: Int? = null
 )
-data class TimeBlock(val hour: Int, var task: String = "")
-data class DaySchedule(val day: String, val blocks: List<TimeBlock>)
+
 
 /* ---------- Auth UI ---------- */
 @Composable
@@ -465,7 +464,7 @@ fun HomeScreen(
                                         }
                                     }
 
-                                    Divider(modifier = Modifier.padding(top = 12.dp, bottom = 8.dp))
+                                    HorizontalDivider(modifier = Modifier.padding(top = 12.dp, bottom = 8.dp))
 
                                     Row(
                                         modifier = Modifier.fillMaxWidth(),
