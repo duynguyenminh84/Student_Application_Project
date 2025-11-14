@@ -113,6 +113,50 @@ private fun TaskMirrorEffect(uid: Long) {
 // ====== END Room mirror ======
 
 
+// ---------- Simple Task model ----------
+data class Task(
+    val name: String,
+    val category: String = "General",
+    val priority: String = "Medium",
+    val isDone: Boolean = false,
+    val scheduledDay: String? = null,  // e.g. "2025-11-03"
+    val scheduledHour: Int? = null
+)
+
+/* ---------- Reusable confirm dialog ---------- */
+@Composable
+private fun ConfirmRemoveDialog(
+    title: String = "Remove task?",
+    message: String = "This action cannot be undone.",
+    onConfirm: () -> Unit,
+    onDismiss: () -> Unit
+) {
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        icon = { Icon(Icons.Default.Warning, contentDescription = null) },
+        title = { Text(title) },
+        text = { Text(message) },
+        confirmButton = { TextButton(onClick = onConfirm) { Text("Remove") } },
+        dismissButton = { TextButton(onClick = onDismiss) { Text("Cancel") } }
+    )
+}
+
+/* ---------- Tiny helper: show Undo snackbar ---------- */
+suspend fun showUndoDelete(
+    snackbarHost: SnackbarHostState,
+    message: String,
+    onUndo: () -> Unit
+) {
+    val res = snackbarHost.showSnackbar(
+        message = message,
+        actionLabel = "Undo",
+        withDismissAction = true,
+        duration = SnackbarDuration.Short
+    )
+    if (res == SnackbarResult.ActionPerformed) onUndo()
+}
+
+
 // App entry & screens for the task manager.
 class MainActivity : ComponentActivity() {
     private var cloudInitForUid: Long? = null
@@ -126,6 +170,9 @@ class MainActivity : ComponentActivity() {
                 val error by authVm.error.collectAsState()
                 val uid by authVm.currentUserId.collectAsState()
                 val appCtx = LocalContext.current.applicationContext
+
+                // ONE snackbarHost for the whole app
+                val snackbarHost = remember { SnackbarHostState() }
 
                 LaunchedEffect(Unit) {
                     try { Firebase.auth.signInAnonymously().await() } catch (_: Exception) {}
@@ -156,6 +203,7 @@ class MainActivity : ComponentActivity() {
 
                     var currentScreen by rememberSaveable { mutableStateOf(Screen.Home) }
                     Scaffold(
+                        snackbarHost = { SnackbarHost(snackbarHost) },
                         bottomBar = {
                             NavigationBar {
                                 NavigationBarItem(
@@ -187,10 +235,10 @@ class MainActivity : ComponentActivity() {
                     ) { innerPadding ->
                         Box(Modifier.padding(innerPadding)) {
                             when (currentScreen) {
-                                Screen.Home          -> HomeScreen(uid = uid, onLogout = { authVm.logout() })
-                                Screen.TaskManager   -> TaskManagerScreen(uid = uid)
-                                Screen.WeeklyPlanner -> WeeklyPlannerScreen(uid = uid)
-                                Screen.Dashboard     -> DashboardScreen(uid = uid)
+                                Screen.Home          -> HomeScreen(uid = uid, snackbarHost = snackbarHost, onLogout = { authVm.logout() })
+                                Screen.TaskManager   -> TaskManagerScreen(uid = uid, snackbarHost = snackbarHost)
+                                Screen.WeeklyPlanner -> WeeklyPlannerScreen(uid = uid, snackbarHost = snackbarHost)
+                                Screen.Dashboard     -> DashboardScreen(uid = uid, snackbarHost = snackbarHost)
                             }
                         }
                     }
@@ -202,38 +250,6 @@ class MainActivity : ComponentActivity() {
 
 /* ---------- Navigation ---------- */
 enum class Screen { Home, TaskManager, WeeklyPlanner, Dashboard }
-
-/* ---------- Data models ---------- */
-data class Task(
-    val name: String,
-    val category: String = "General",
-    val priority: String = "Medium",
-    val isDone: Boolean = false,
-    val scheduledDay: String? = null,  // e.g. "2025-11-03"
-    val scheduledHour: Int? = null
-)
-
-/* ---------- Reusable confirm dialog ---------- */
-@Composable
-private fun ConfirmRemoveDialog(
-    title: String = "Remove task?",
-    message: String = "This action cannot be undone.",
-    onConfirm: () -> Unit,
-    onDismiss: () -> Unit
-) {
-    AlertDialog(
-        onDismissRequest = onDismiss,
-        icon = { Icon(Icons.Default.Warning, contentDescription = null) },
-        title = { Text(title) },
-        text = { Text(message) },
-        confirmButton = {
-            TextButton(onClick = onConfirm) { Text("Remove") }
-        },
-        dismissButton = {
-            TextButton(onClick = onDismiss) { Text("Cancel") }
-        }
-    )
-}
 
 /* ---------- Auth UI ---------- */
 @Composable
@@ -280,6 +296,7 @@ fun LoginScreen(
 @Composable
 fun HomeScreen(
     uid: Long,
+    snackbarHost: SnackbarHostState,
     onLogout: () -> Unit = {}
 ) {
     val context = LocalContext.current
@@ -417,11 +434,36 @@ fun HomeScreen(
                                             showEditDialog = true
                                         }) { Icon(Icons.Default.Edit, contentDescription = "Edit Task") }
 
-                                        IconButton(onClick = { deleteIndex = taskIndex }) {
-                                            Icon(Icons.Default.Delete, contentDescription = "Delete Task")
+                                        // Ask first
+                                        var askConfirm by remember { mutableStateOf(false) }
+                                        if (askConfirm) {
+                                            ConfirmRemoveDialog(
+                                                title = "Remove this task?",
+                                                message = "This will delete the task from your list.",
+                                                onConfirm = {
+                                                    val removedIndex = taskIndex
+                                                    val removedTask = tasks[removedIndex]
+                                                    val newList = tasks.filterIndexed { i, _ -> i != removedIndex }
+                                                    tasks = newList
+                                                    askConfirm = false
+                                                    scope.launch {
+                                                        TaskPrefs.saveTasks(context, uid, newList)
+                                                        showUndoDelete(snackbarHost, "Task removed") {
+                                                            val restored = newList.toMutableList()
+                                                            restored.add(removedIndex.coerceAtMost(restored.size), removedTask)
+                                                            tasks = restored
+                                                            scope.launch { TaskPrefs.saveTasks(context, uid, restored) }
+                                                        }
+                                                    }
+                                                },
+                                                onDismiss = { askConfirm = false }
+                                            )
                                         }
 
-                                        TextButton(onClick = { deleteIndex = taskIndex }) { Text("Remove") }
+                                        IconButton(onClick = { askConfirm = true }) {
+                                            Icon(Icons.Default.Delete, contentDescription = "Delete Task")
+                                        }
+                                        TextButton(onClick = { askConfirm = true }) { Text("Remove") }
                                     }
                                 }
                             }
@@ -430,21 +472,6 @@ fun HomeScreen(
                 }
             }
         }
-    }
-
-    // Confirm remove (Home)
-    deleteIndex?.let { idx ->
-        ConfirmRemoveDialog(
-            title = "Remove this task?",
-            message = "This will delete the task from your list.",
-            onConfirm = {
-                val newList = tasks.filterIndexed { i, _ -> i != idx }
-                tasks = newList
-                deleteIndex = null
-                scope.launch { TaskPrefs.saveTasks(context, uid, newList) }
-            },
-            onDismiss = { deleteIndex = null }
-        )
     }
 
     // Edit dialog (category/priority only)
@@ -487,7 +514,7 @@ fun HomeScreen(
 
 /* ---------- Task Manager ---------- */
 @Composable
-fun TaskManagerScreen(uid: Long) {
+fun TaskManagerScreen(uid: Long, snackbarHost: SnackbarHostState) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
 
@@ -538,6 +565,7 @@ fun TaskManagerScreen(uid: Long) {
                         )
                         TaskPrefs.saveTasks(context, uid, current + newTask)
                         taskName = ""; selectedDate = null; marimbaSong.start()
+                        snackbarHost.showSnackbar("Task added")
                     }
                 }
             },
@@ -589,7 +617,7 @@ fun FilterDropdown(label: String, options: List<String>, selected: String, onSel
 
 /* ---------- Weekly Planner ---------- */
 @Composable
-fun WeeklyPlannerScreen(uid: Long) {
+fun WeeklyPlannerScreen(uid: Long, snackbarHost: SnackbarHostState) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
 
@@ -672,7 +700,32 @@ fun WeeklyPlannerScreen(uid: Long) {
                                     IconButton(onClick = { editingIndex = globalIdx }) {
                                         Icon(Icons.Default.Edit, contentDescription = "Edit Task")
                                     }
-                                    IconButton(onClick = { pendingDeleteIdx = globalIdx }) {
+
+                                    var askConfirm by remember { mutableStateOf(false) }
+                                    if (askConfirm) {
+                                        ConfirmRemoveDialog(
+                                            title = "Remove this task?",
+                                            message = "This will delete the task from your list.",
+                                            onConfirm = {
+                                                val removedTask = editableTasks[globalIdx]
+                                                val newList = editableTasks.toMutableList().also { it.removeAt(globalIdx) }
+                                                editableTasks = newList
+                                                askConfirm = false
+                                                persist(newList)
+                                                // Undo
+                                                scope.launch {
+                                                    showUndoDelete(snackbarHost, "Task removed") {
+                                                        val restored = newList.toMutableList()
+                                                        restored.add(globalIdx.coerceAtMost(restored.size), removedTask)
+                                                        editableTasks = restored
+                                                        persist(restored)
+                                                    }
+                                                }
+                                            },
+                                            onDismiss = { askConfirm = false }
+                                        )
+                                    }
+                                    IconButton(onClick = { askConfirm = true }) {
                                         Icon(Icons.Default.Delete, contentDescription = "Delete Task")
                                     }
                                 }
@@ -682,20 +735,6 @@ fun WeeklyPlannerScreen(uid: Long) {
                 }
             }
         }
-    }
-
-    // Confirm remove (Planner)
-    pendingDeleteIdx?.let { idx ->
-        ConfirmRemoveDialog(
-            title = "Remove this task?",
-            message = "This will delete the task from your list.",
-            onConfirm = {
-                editableTasks.removeAt(idx)
-                persist(editableTasks)
-                pendingDeleteIdx = null
-            },
-            onDismiss = { pendingDeleteIdx = null }
-        )
     }
 
     editingIndex?.let { idx ->
@@ -738,7 +777,7 @@ fun WeeklyPlannerScreen(uid: Long) {
 
 /* ---------- Dashboard ---------- */
 @Composable
-fun DashboardScreen(uid: Long) {
+fun DashboardScreen(uid: Long, snackbarHost: SnackbarHostState) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
     val tasks by TaskPrefs.getTasks(context, uid).collectAsState(initial = emptyList())
@@ -858,7 +897,31 @@ fun DashboardScreen(uid: Long) {
                             }
                             Row {
                                 IconButton(onClick = { setDone(t) }) { Icon(Icons.Default.Check, contentDescription = "Mark Done") }
-                                IconButton(onClick = { taskToRemove = t }) { Icon(Icons.Default.Delete, contentDescription = "Remove") }
+
+                                var askConfirm by remember { mutableStateOf(false) }
+                                if (askConfirm) {
+                                    ConfirmRemoveDialog(
+                                        title = "Remove this task?",
+                                        message = "This will delete the task from your list.",
+                                        onConfirm = {
+                                            val idx = tasks.indexOf(t)
+                                            if (idx >= 0) {
+                                                val newList = tasks.toMutableList().also { it.removeAt(idx) }
+                                                askConfirm = false
+                                                scope.launch {
+                                                    TaskPrefs.saveTasks(context, uid, newList)
+                                                    showUndoDelete(snackbarHost, "Task removed") {
+                                                        val restored = newList.toMutableList()
+                                                        restored.add(idx.coerceAtMost(restored.size), t)
+                                                        scope.launch { TaskPrefs.saveTasks(context, uid, restored) }
+                                                    }
+                                                }
+                                            } else askConfirm = false
+                                        },
+                                        onDismiss = { askConfirm = false }
+                                    )
+                                }
+                                IconButton(onClick = { askConfirm = true }) { Icon(Icons.Default.Delete, contentDescription = "Remove") }
                             }
                         }
                     }
@@ -879,7 +942,31 @@ fun DashboardScreen(uid: Long) {
                             }
                             Row {
                                 IconButton(onClick = { setDone(t) }) { Icon(Icons.Default.Check, contentDescription = "Mark Done") }
-                                IconButton(onClick = { taskToRemove = t }) { Icon(Icons.Default.Delete, contentDescription = "Remove") }
+
+                                var askConfirm by remember { mutableStateOf(false) }
+                                if (askConfirm) {
+                                    ConfirmRemoveDialog(
+                                        title = "Remove this task?",
+                                        message = "This will delete the task from your list.",
+                                        onConfirm = {
+                                            val idx = tasks.indexOf(t)
+                                            if (idx >= 0) {
+                                                val newList = tasks.toMutableList().also { it.removeAt(idx) }
+                                                askConfirm = false
+                                                scope.launch {
+                                                    TaskPrefs.saveTasks(context, uid, newList)
+                                                    showUndoDelete(snackbarHost, "Task removed") {
+                                                        val restored = newList.toMutableList()
+                                                        restored.add(idx.coerceAtMost(restored.size), t)
+                                                        scope.launch { TaskPrefs.saveTasks(context, uid, restored) }
+                                                    }
+                                                }
+                                            } else askConfirm = false
+                                        },
+                                        onDismiss = { askConfirm = false }
+                                    )
+                                }
+                                IconButton(onClick = { askConfirm = true }) { Icon(Icons.Default.Delete, contentDescription = "Remove") }
                             }
                         }
                     }
@@ -888,7 +975,7 @@ fun DashboardScreen(uid: Long) {
         }
     }
 
-    // Confirm remove (Dashboard)
+    // Extra safety: also allow delete via list-wide dialog trigger
     taskToRemove?.let { t ->
         ConfirmRemoveDialog(
             title = "Remove this task?",
@@ -897,7 +984,14 @@ fun DashboardScreen(uid: Long) {
                 val idx = tasks.indexOf(t)
                 if (idx >= 0) {
                     val newList = tasks.toMutableList().also { it.removeAt(idx) }
-                    scope.launch { TaskPrefs.saveTasks(context, uid, newList) }
+                    scope.launch {
+                        TaskPrefs.saveTasks(context, uid, newList)
+                        showUndoDelete(snackbarHost, "Task removed") {
+                            val restored = newList.toMutableList()
+                            restored.add(idx.coerceAtMost(restored.size), t)
+                            scope.launch { TaskPrefs.saveTasks(context, uid, restored) }
+                        }
+                    }
                 }
                 taskToRemove = null
             },
