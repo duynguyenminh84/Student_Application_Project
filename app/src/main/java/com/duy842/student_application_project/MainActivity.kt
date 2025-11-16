@@ -650,8 +650,7 @@ fun TaskManagerScreen(uid: Long, snackbarHost: SnackbarHostState) {
             Text(text = selectedDate?.let { "🗓 Deadline: $it" } ?: "Select Deadline")
         }
 
-        val marimbaSong = remember { MediaPlayer.create(context, R.raw.marimba) }
-
+        val sound = remember { MediaPlayer.create(context, R.raw.submit_sound) }
         Button(
             onClick = {
                 if (taskName.isNotBlank()) {
@@ -664,7 +663,8 @@ fun TaskManagerScreen(uid: Long, snackbarHost: SnackbarHostState) {
                             scheduledDay = selectedDate
                         )
                         TaskPrefs.saveTasks(context, uid, current + newTask)
-                        taskName = ""; selectedDate = null; marimbaSong.start()
+                        taskName = ""; selectedDate = null;
+                        sound.start()
                         snackbarHost.showSnackbar("Task added")
                     }
                 }
