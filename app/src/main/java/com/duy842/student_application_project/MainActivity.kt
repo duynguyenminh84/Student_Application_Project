@@ -431,7 +431,7 @@ fun HomeScreen(
                 style = MaterialTheme.typography.headlineSmall.copy(fontWeight = FontWeight.Bold, letterSpacing = 1.2.sp),
                 color = MaterialTheme.colorScheme.primary
             )
-            /// Logout Button
+            ///  Logout Button
             TextButton(onClick = onLogout) {
                 Text("Log out")
             }
