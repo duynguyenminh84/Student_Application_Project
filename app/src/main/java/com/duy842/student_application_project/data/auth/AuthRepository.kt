@@ -23,11 +23,13 @@ class AuthRepository(private val userDao: UserDao) {
         // Check if a user with this email already exists
         val existing = userDao.findByEmail(normalizedEmail)
         if (existing != null) {
+            // STRICT behaviour: do NOT log them in, force them to use Login button
             return Result.failure(
                 IllegalStateException("Email already in use")
             )
         }
 
+        // Email is new → create a brand new user
         val salt = PasswordHasher.newSalt()
         val hash = PasswordHasher.hash(normalizedPwd, salt)
 
@@ -41,6 +43,8 @@ class AuthRepository(private val userDao: UserDao) {
 
         return Result.success(id)
     }
+
+
 
     suspend fun login(email: String, password: String): Result<UserEntity> {
         val normalizedEmail = normalizeEmail(email)
