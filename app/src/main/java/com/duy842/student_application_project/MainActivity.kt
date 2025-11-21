@@ -114,7 +114,7 @@ private fun TaskMirrorEffect(uid: Long) {
 // ====== END  Room mirror ======
 
 
-// ---------- Simple  Task model ----------
+// ---------- Simple Task model ----------
 data class Task(
     val name: String,
     val category: String = "General",
