@@ -239,7 +239,7 @@ fun AppBackground(content: @Composable () -> Unit) {
     }
 }
 
-// ---------- Navigation ----------
+// ----------Navigation ----------
 enum class Screen { Home, TaskManager, WeeklyPlanner, Dashboard }
 
 // ---------- App entry ----------
