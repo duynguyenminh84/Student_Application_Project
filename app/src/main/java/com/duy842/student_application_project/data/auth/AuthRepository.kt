@@ -2,35 +2,61 @@ package com.duy842.student_application_project.data.auth
 
 class AuthRepository(private val userDao: UserDao) {
 
-    suspend fun register(email: String, password: String): Result<Long> {
-        val normalized = email.trim().lowercase()
-        val pwd = password.trim() // <-- trim password to avoid invisible spaces issues
+    /** Normalize email: trim spaces and lowercase for consistent lookup. */
+    private fun normalizeEmail(raw: String): String =
+        raw.trim().lowercase()
 
-        if (normalized.isBlank() || pwd.isBlank()) {
-            return Result.failure(IllegalArgumentException("Email and password are required"))
+    /** Normalize password: trim only, do NOT lowercase (passwords are case-sensitive). */
+    private fun normalizePassword(raw: String): String =
+        raw.trim()
+
+    suspend fun register(email: String, password: String): Result<Long> {
+        val normalizedEmail = normalizeEmail(email)
+        val normalizedPwd = normalizePassword(password)
+
+        if (normalizedEmail.isBlank() || normalizedPwd.isBlank()) {
+            return Result.failure(
+                IllegalArgumentException("Email and password are required")
+            )
         }
 
-        val existing = userDao.findByEmail(normalized)
-        if (existing != null) return Result.failure(IllegalStateException("Email already in use"))
+        // Check if a user with this email already exists
+        val existing = userDao.findByEmail(normalizedEmail)
+        if (existing != null) {
+            return Result.failure(
+                IllegalStateException("Email already in use")
+            )
+        }
 
         val salt = PasswordHasher.newSalt()
-        val hash = PasswordHasher.hash(pwd, salt) // <-- use trimmed password
+        val hash = PasswordHasher.hash(normalizedPwd, salt)
+
         val id = userDao.insert(
-            UserEntity(email = normalized, passwordHash = hash, salt = salt)
+            UserEntity(
+                email = normalizedEmail,
+                passwordHash = hash,
+                salt = salt
+            )
         )
+
         return Result.success(id)
     }
 
     suspend fun login(email: String, password: String): Result<UserEntity> {
-        val normalized = email.trim().lowercase()
-        val pwd = password.trim() // <-- trim password here too
+        val normalizedEmail = normalizeEmail(email)
+        val normalizedPwd = normalizePassword(password)
 
-        val user = userDao.findByEmail(normalized)
-            ?: return Result.failure(IllegalArgumentException("Invalid email or password"))
+        // Look up user using the same normalized email as in register()
+        val user = userDao.findByEmail(normalizedEmail)
+            ?: return Result.failure(
+                IllegalArgumentException("Invalid email or password")
+            )
 
-        return if (PasswordHasher.verify(pwd, user.salt, user.passwordHash)) // <-- verify with trimmed pwd
+        // Verify password hash
+        return if (PasswordHasher.verify(normalizedPwd, user.salt, user.passwordHash)) {
             Result.success(user)
-        else
+        } else {
             Result.failure(IllegalArgumentException("Invalid email or password"))
+        }
     }
 }

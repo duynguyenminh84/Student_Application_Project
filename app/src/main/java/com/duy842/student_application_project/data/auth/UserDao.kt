@@ -7,10 +7,12 @@ import androidx.room.Query
 
 @Dao
 interface UserDao {
+
     @Insert(onConflict = OnConflictStrategy.ABORT)
     suspend fun insert(user: UserEntity): Long
 
-    @Query("SELECT * FROM users WHERE email = :email LIMIT 1")
+    // Case-insensitive email lookup to match normalized email in AuthRepository
+    @Query("SELECT * FROM users WHERE lower(email) = lower(:email) LIMIT 1")
     suspend fun findByEmail(email: String): UserEntity?
 
     @Query("SELECT COUNT(*) FROM users")
