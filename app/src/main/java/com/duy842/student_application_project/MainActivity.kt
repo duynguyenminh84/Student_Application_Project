@@ -167,7 +167,7 @@ private fun AppBackground(content: @Composable () -> Unit) {
             .fillMaxSize()
             .background(cs.background)
     ) {
-        // soft radial blobs
+        // soft  radial blobs
         Box(
             Modifier
                 .matchParentSize()
