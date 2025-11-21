@@ -1,7 +1,7 @@
 plugins {
     id("com.android.application")
     id("org.jetbrains.kotlin.android")
-    id("org.jetbrains.kotlin.plugin.compose")   // <-- add this
+    id("org.jetbrains.kotlin.plugin.compose")
     id("com.google.gms.google-services")
     kotlin("kapt")
 }
@@ -39,7 +39,7 @@ android {
 }
 
 dependencies {
-    // ---- Core + Compose (from your version catalog) ----
+    // ---- Core + Compose (from version catalog) ----
     implementation(libs.androidx.core.ktx)
     implementation(libs.androidx.lifecycle.runtime.ktx)
     implementation(libs.androidx.activity.compose)
@@ -49,10 +49,10 @@ dependencies {
     implementation(libs.androidx.compose.ui.tooling.preview)
     implementation(libs.androidx.compose.material3)
 
-    // ---- Firebase (BoM + Firestore KTX) ----
+    // ---- Firebase ----
     implementation(platform("com.google.firebase:firebase-bom:33.5.1"))
     implementation("com.google.firebase:firebase-firestore-ktx")
-    implementation("com.google.firebase:firebase-common-ktx") // helps resolve `Firebase` KTX object
+    implementation("com.google.firebase:firebase-common-ktx")
     implementation("com.google.firebase:firebase-auth-ktx")
 
     // ---- DataStore ----
@@ -71,20 +71,22 @@ dependencies {
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.8.1")
 
     // ================== Unit tests (JVM) ==================
-    testImplementation(libs.junit)
+    testImplementation("junit:junit:4.13.2")
     testImplementation("org.jetbrains.kotlinx:kotlinx-coroutines-test:1.8.1")
     testImplementation("io.mockk:mockk:1.13.12")
     testImplementation("org.robolectric:robolectric:4.11.1")
     testImplementation("androidx.test:core:1.6.1")
 
     // ============== Instrumented tests (androidTest) ==============
-    androidTestImplementation(libs.androidx.junit)
-    androidTestImplementation(libs.androidx.espresso.core)
-    androidTestImplementation(platform(libs.androidx.compose.bom))
-    androidTestImplementation(libs.androidx.compose.ui.test.junit4)
-    androidTestImplementation("androidx.test:core:1.6.1")
+    // Explicit AndroidX test dependencies so ApplicationProvider & AndroidJUnit4 resolve
+    androidTestImplementation("androidx.test.ext:junit:1.2.1")          // AndroidJUnit4
+    androidTestImplementation("androidx.test:core:1.6.1")               // ApplicationProvider
     androidTestImplementation("androidx.test:runner:1.6.2")
     androidTestImplementation("androidx.test:rules:1.6.1")
+    androidTestImplementation("androidx.test.espresso:espresso-core:3.6.1")
+
+    androidTestImplementation(platform(libs.androidx.compose.bom))
+    androidTestImplementation(libs.androidx.compose.ui.test.junit4)
     androidTestImplementation("androidx.room:room-testing:2.6.1")
 
     // ---- Debug tooling ----

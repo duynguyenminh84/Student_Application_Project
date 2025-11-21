@@ -1,6 +1,6 @@
 package com.duy842.student_application_project.data.auth
 
-
+import android.content.Context
 import androidx.test.core.app.ApplicationProvider
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import kotlinx.coroutines.flow.first
@@ -14,7 +14,8 @@ class AuthPrefsTest {
 
     @Test
     fun set_and_clear_current_user_roundtrip() = runBlocking {
-        val ctx = ApplicationProvider.getApplicationContext<android.content.Context>()
+        // Use the instrumentation application context
+        val ctx = ApplicationProvider.getApplicationContext<Context>()
 
         // initially -1 (logged out)
         assertEquals(-1L, AuthPrefs.currentUserId(ctx).first())
